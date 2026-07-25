@@ -9,6 +9,7 @@ from sqlalchemy import (
     Date,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -240,3 +241,61 @@ class ResearchScore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     data_completeness: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
     engine_version: Mapped[str] = mapped_column(String(16))
     inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class RegimeSnapshot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One regime classification. `features` holds the raw inputs and `flags` the
+    bearish checks so the label is fully reproducible (docs/adr/0008)."""
+
+    __tablename__ = "regime_snapshots"
+    __table_args__ = (Index("ix_regime_ts", "ts"),)
+
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    label: Mapped[str] = mapped_column(String(16))  # confirmed regime
+    raw_label: Mapped[str] = mapped_column(String(16))  # today's unconfirmed label
+    bearish_count: Mapped[int] = mapped_column(Integer)
+    features: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    weights: Mapped[dict[str, Any]] = mapped_column(JSONB)  # family weight set it activated
+
+
+class StrategyScore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """v2 fusion output at one point in time. `inputs` holds every raw signal + its
+    percentile so the composite is fully reproducible (engine_version pins the math)."""
+
+    __tablename__ = "strategy_scores"
+    __table_args__ = (
+        UniqueConstraint("company_id", "ts", name="uq_strategy_scores_ts"),
+        Index("ix_strategy_scores_ts_composite", "ts", "composite"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
+    )
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    regime: Mapped[str] = mapped_column(String(16))
+
+    valuation: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    fundamentals: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    momentum: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    technical: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    risk: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    composite: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    rank: Mapped[int | None] = mapped_column(Integer)
+
+    data_completeness: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    engine_version: Mapped[str] = mapped_column(String(16))
+    weights_used: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class StrategyConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Versioned strategy parameters (weights, thresholds). Every change is a new row so
+    the exact configuration behind any decision is auditable (docs/adr/0008)."""
+
+    __tablename__ = "strategy_config"
+    __table_args__ = (UniqueConstraint("version", name="uq_strategy_config_version"),)
+
+    version: Mapped[str] = mapped_column(String(32))
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False)

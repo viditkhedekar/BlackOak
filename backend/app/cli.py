@@ -31,6 +31,7 @@ from app.services.providers import (
     get_market_data_provider,
 )
 from app.services.scoring import score_universe_job
+from app.services.signal_pipeline import run_signal_pipeline
 from app.services.universe import seed_etfs, seed_universe
 
 log = structlog.get_logger()
@@ -105,6 +106,19 @@ async def _backfill_intraday(days: int, symbols: list[str] | None, interval: str
     )
 
 
+async def _signals() -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await run_signal_pipeline(session)
+    log.info(
+        "cli.signals.done",
+        ts=report.ts.isoformat(),
+        regime=report.regime,
+        scored=report.scored,
+        breadth=round(report.breadth, 3),
+    )
+
+
 async def _macro(years: int) -> None:
     settings = get_settings()
     fred = get_macro_provider(settings)
@@ -169,6 +183,8 @@ def main() -> None:
     mac = sub.add_parser("macro", help="Ingest FRED rate/curve/inflation series + VIX")
     mac.add_argument("--years", type=int, default=5)
 
+    sub.add_parser("signals", help="Run the v2 signal pipeline (regime + fused scores)")
+
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(_seed())
@@ -184,6 +200,8 @@ def main() -> None:
         )
     elif args.command == "macro":
         asyncio.run(_macro(args.years))
+    elif args.command == "signals":
+        asyncio.run(_signals())
 
 
 if __name__ == "__main__":

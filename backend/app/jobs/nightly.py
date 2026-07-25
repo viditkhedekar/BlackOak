@@ -17,6 +17,7 @@ from app.db.session import get_session_factory
 from app.services.fundamentals_ingest import ingest_fundamentals
 from app.services.providers import get_fundamentals_provider
 from app.services.scoring import score_universe_job
+from app.services.signal_pipeline import run_signal_pipeline
 
 log = structlog.get_logger()
 
@@ -34,6 +35,9 @@ async def run_nightly() -> None:
         fund = await ingest_fundamentals(session, provider)
     async with factory() as session:
         rows = await score_universe_job(session)
+    # v2 strategy pipeline: regime + fused strategy_scores on the fresh fundamentals.
+    async with factory() as session:
+        pipeline = await run_signal_pipeline(session)
     async with factory() as session:
         cutoff = datetime.now(UTC) - INTRADAY_RETENTION
         pruned = await IntradayRepository(session).prune_before(cutoff)
@@ -44,5 +48,7 @@ async def run_nightly() -> None:
         fundamentals_written=fund.records_written,
         fundamentals_failed=len(fund.failed),
         scores=rows,
+        strategy_scored=pipeline.scored,
+        regime=pipeline.regime,
         intraday_pruned=pruned,
     )
