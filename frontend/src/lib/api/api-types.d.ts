@@ -72,6 +72,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/companies/{symbol}/scores": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Company Scores */
+        get: operations["get_company_scores_api_v1_companies__symbol__scores_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/screener": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Screen */
+        get: operations["screen_api_v1_screener_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -93,6 +127,34 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CategoryBreakdown */
+        CategoryBreakdown: {
+            /** Category */
+            category: string;
+            /** Score */
+            score: number | null;
+            /** Factors */
+            factors: components["schemas"]["FactorBreakdownItem"][];
+        };
+        /** CategoryScores */
+        CategoryScores: {
+            /** Financial Health */
+            financial_health?: number | null;
+            /** Growth */
+            growth?: number | null;
+            /** Value */
+            value?: number | null;
+            /** Quality */
+            quality?: number | null;
+            /** Profitability */
+            profitability?: number | null;
+            /** Momentum */
+            momentum?: number | null;
+            /** Volatility */
+            volatility?: number | null;
+            /** Risk */
+            risk?: number | null;
+        };
         /** CompanyDetail */
         CompanyDetail: {
             /** Symbol */
@@ -123,6 +185,27 @@ export interface components {
             /** Offset */
             offset: number;
         };
+        /** CompanyScoreDetail */
+        CompanyScoreDetail: {
+            /** Symbol */
+            symbol: string;
+            /** Profile */
+            profile: string;
+            /**
+             * As Of
+             * Format: date
+             */
+            as_of: string;
+            /** Composite */
+            composite: number | null;
+            /** Data Completeness */
+            data_completeness: number;
+            /** Engine Version */
+            engine_version: string;
+            categories: components["schemas"]["CategoryScores"];
+            /** Breakdown */
+            breakdown: components["schemas"]["CategoryBreakdown"][];
+        };
         /** CompanySummary */
         CompanySummary: {
             /** Symbol */
@@ -133,6 +216,17 @@ export interface components {
             sector: string | null;
             /** Industry */
             industry: string | null;
+        };
+        /** FactorBreakdownItem */
+        FactorBreakdownItem: {
+            /** Factor */
+            factor: string;
+            /** Raw */
+            raw: number | null;
+            /** Score */
+            score: number | null;
+            /** Inverse */
+            inverse: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -176,6 +270,35 @@ export interface components {
             range: string;
             /** Points */
             points: components["schemas"]["PricePoint"][];
+        };
+        /** ScreenerResponse */
+        ScreenerResponse: {
+            /** Items */
+            items: components["schemas"]["ScreenerRow"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Profile */
+            profile: string;
+            /** As Of */
+            as_of: string | null;
+        };
+        /** ScreenerRow */
+        ScreenerRow: {
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string | null;
+            /** Composite */
+            composite: number | null;
+            /** Data Completeness */
+            data_completeness: number;
+            categories: components["schemas"]["CategoryScores"];
         };
         /** ValidationError */
         ValidationError: {
@@ -306,6 +429,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PriceSeries"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_company_scores_api_v1_companies__symbol__scores_get: {
+        parameters: {
+            query?: {
+                profile?: string;
+            };
+            header?: never;
+            path: {
+                symbol: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompanyScoreDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    screen_api_v1_screener_get: {
+        parameters: {
+            query?: {
+                profile?: string;
+                minScore?: number | null;
+                sector?: string | null;
+                sortBy?: string;
+                order?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScreenerResponse"];
                 };
             };
             /** @description Validation Error */
