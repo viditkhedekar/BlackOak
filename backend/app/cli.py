@@ -23,6 +23,7 @@ from app.services.benchmarks import ingest_benchmarks, seed_benchmarks
 from app.services.fundamentals_ingest import ingest_fundamentals
 from app.services.ingest import ingest_prices
 from app.services.providers import get_fundamentals_provider, get_market_data_provider
+from app.services.scoring import score_universe_job
 from app.services.universe import seed_universe
 
 log = structlog.get_logger()
@@ -68,6 +69,13 @@ async def _backfill(years: int, symbols: list[str] | None, batch: int) -> None:
     log.info("cli.backfill.done", symbols=len(targets), start=str(start), end=str(end))
 
 
+async def _score() -> None:
+    factory = get_session_factory()
+    async with factory() as session:
+        written = await score_universe_job(session)
+    log.info("cli.score.done", rows=written)
+
+
 async def _fundamentals(symbols: list[str] | None) -> None:
     settings = get_settings()
     provider = get_fundamentals_provider(settings)
@@ -103,6 +111,8 @@ def main() -> None:
     fund = sub.add_parser("fundamentals", help="Ingest annual fundamentals")
     fund.add_argument("--symbols", type=str, default=None, help="comma-separated; default all")
 
+    sub.add_parser("score", help="Compute research scores for the whole universe")
+
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(_seed())
@@ -110,6 +120,8 @@ def main() -> None:
         asyncio.run(_backfill(args.years, _parse_symbols(args.symbols), args.batch))
     elif args.command == "fundamentals":
         asyncio.run(_fundamentals(_parse_symbols(args.symbols)))
+    elif args.command == "score":
+        asyncio.run(_score())
 
 
 if __name__ == "__main__":

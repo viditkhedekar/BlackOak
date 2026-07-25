@@ -16,6 +16,7 @@ from app.domain.calendar import is_trading_day
 from app.services.benchmarks import ingest_benchmarks
 from app.services.ingest import ingest_prices
 from app.services.providers import get_market_data_provider
+from app.services.scoring import score_universe_job
 
 log = structlog.get_logger()
 
@@ -41,10 +42,14 @@ async def run_eod_ingest() -> None:
         report = await ingest_prices(
             session, provider, start, target, symbols=None, job_name="eod_ingest"
         )
+    # Rescore the universe on the fresh prices (fundamentals refresh runs nightly at 02:00).
+    async with factory() as session:
+        rows = await score_universe_job(session)
     log.info(
         "eod_ingest.done",
         target=str(target),
         symbols=report.requested,
         bars=report.bars_written,
         failed=len(report.failed),
+        scores=rows,
     )
