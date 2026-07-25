@@ -13,6 +13,11 @@ dependencies = [
     "pydantic-settings>=2.3",
     "structlog>=24.1",
     "apscheduler>=3.10,<4",
+    "yfinance>=1.5.2",
+    "tenacity>=8",
+    "exchange-calendars>=4",
+    "lxml>=6.1.1",
+    "alpaca-py>=0.43.5",
 ]
 
 [dependency-groups]
@@ -31,6 +36,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic autogenerates wide, densely-formatted migration bodies.
+"alembic/versions/*" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
@@ -38,7 +47,7 @@ plugins = ["pydantic.mypy"]
 files = ["app", "worker.py"]
 
 [[tool.mypy.overrides]]
-module = ["apscheduler.*"]
+module = ["apscheduler.*", "yfinance.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

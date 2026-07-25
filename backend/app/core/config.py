@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://blackoak:blackoak@localhost:5434/blackoak"
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # "yfinance" (no key) or "alpaca" (uses the paper keys' free IEX feed).
+    market_data_provider: str = "yfinance"
+
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
 
