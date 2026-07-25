@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
-from app.domain.fundamentals import FundamentalRecord
+from app.domain.fundamentals import EstimateRecord, FundamentalRecord
 from app.domain.macro import MacroPoint
 from app.domain.market_data import Bar, IntradayBar
 
@@ -63,4 +63,8 @@ class FundamentalsProvider(Protocol):
 
     def fetch_annual_fundamentals(self, symbol: str) -> list[FundamentalRecord]:
         """Return annual fundamentals (ascending by fiscal_date). Empty list if none."""
+        ...
+
+    def fetch_estimates(self, symbol: str) -> EstimateRecord | None:
+        """Return current forward estimates, or None if unavailable."""
         ...

@@ -6,6 +6,7 @@ lives here and nowhere else (ADR-0004). Missing line items simply stay None.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
@@ -13,7 +14,18 @@ import structlog
 import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from app.domain.fundamentals import FundamentalRecord
+from app.domain.fundamentals import EstimateRecord, FundamentalRecord
+
+
+def _scalar(info: dict[str, object], key: str) -> Decimal | None:
+    value = info.get(key)
+    if value is None:
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return None if result.is_nan() else result
 
 log = structlog.get_logger()
 
@@ -22,6 +34,8 @@ _INCOME = {
     "revenue": "Total Revenue",
     "gross_profit": "Gross Profit",
     "ebitda": "EBITDA",
+    "ebit": "EBIT",
+    "operating_income": "Operating Income",
     "net_income": "Net Income",
     "eps_diluted": "Diluted EPS",
     "interest_expense": "Interest Expense",
@@ -96,3 +110,25 @@ class YFinanceFundamentals:
                 )
             )
         return records
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def fetch_estimates(self, symbol: str) -> EstimateRecord | None:
+        """Forward EPS / forward P/E / PEG from yfinance `info` scalars, stamped today.
+
+        These are point-in-time snapshots (yfinance exposes only the current value), so
+        as_of_date is ingest day — the estimates table is a rolling log, not history."""
+        info = yf.Ticker(symbol).info
+        if not info:
+            log.info("yfinance.estimates.no_data", symbol=symbol)
+            return None
+        return EstimateRecord(
+            as_of_date=datetime.now(UTC).date(),
+            forward_eps=_scalar(info, "forwardEps"),
+            forward_pe=_scalar(info, "forwardPE"),
+            peg=_scalar(info, "trailingPegRatio") or _scalar(info, "pegRatio"),
+        )

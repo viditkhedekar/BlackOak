@@ -89,3 +89,15 @@ def stdev_or_none(values: Sequence[float]) -> float | None:
     if len(values) < 2:
         return None
     return float(statistics.pstdev(values))
+
+
+def correlation(a: Sequence[float], b: Sequence[float]) -> float | None:
+    """Pearson correlation over the overlapping tail. None if degenerate (n<2 or a
+    constant series, where correlation is undefined)."""
+    n = min(len(a), len(b))
+    if n < 2:
+        return None
+    try:
+        return float(statistics.correlation(a[-n:], b[-n:]))
+    except statistics.StatisticsError:
+        return None

@@ -13,6 +13,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories.companies import CompanyRepository
+from app.db.repositories.estimates import EstimatesRepository
 from app.db.repositories.fundamentals import FundamentalsRepository
 from app.services.job_tracking import track_job
 from app.services.ports import FundamentalsProvider
@@ -28,6 +29,7 @@ class FundamentalsReport:
     succeeded: int = 0
     failed: list[str] = field(default_factory=list)
     records_written: int = 0
+    estimates_written: int = 0
 
     @property
     def failure_ratio(self) -> float:
@@ -43,6 +45,7 @@ async def ingest_fundamentals(
     async with track_job(session, job_name) as ctx:
         companies = CompanyRepository(session)
         fundamentals = FundamentalsRepository(session)
+        estimates = EstimatesRepository(session)
 
         if symbols is None:
             targets = await companies.active_symbols()
@@ -63,6 +66,16 @@ async def ingest_fundamentals(
                     company_id, records, source=provider.name
                 )
                 report.records_written += written
+                # Forward estimates share the fetch loop; a missing estimate is not a
+                # symbol failure (it's the weakest data), so isolate it separately.
+                try:
+                    estimate = await asyncio.to_thread(provider.fetch_estimates, symbol)
+                    if estimate is not None:
+                        report.estimates_written += await estimates.upsert(
+                            company_id, estimate, source=provider.name
+                        )
+                except Exception:
+                    log.warning("estimates.symbol_failed", symbol=symbol, exc_info=True)
                 report.succeeded += 1
             except Exception:
                 report.failed.append(symbol)
@@ -74,6 +87,7 @@ async def ingest_fundamentals(
             "succeeded": report.succeeded,
             "failed": report.failed,
             "records_written": report.records_written,
+            "estimates_written": report.estimates_written,
             "provider": provider.name,
         }
         if report.requested and report.failure_ratio > FAILURE_ABORT_RATIO:

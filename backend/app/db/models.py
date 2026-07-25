@@ -171,6 +171,8 @@ class Fundamental(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     revenue: Mapped[Decimal | None] = mapped_column(BigMoney)
     gross_profit: Mapped[Decimal | None] = mapped_column(BigMoney)
     ebitda: Mapped[Decimal | None] = mapped_column(BigMoney)
+    ebit: Mapped[Decimal | None] = mapped_column(BigMoney)
+    operating_income: Mapped[Decimal | None] = mapped_column(BigMoney)
     net_income: Mapped[Decimal | None] = mapped_column(BigMoney)
     eps_diluted: Mapped[Decimal | None] = mapped_column(Money)
     interest_expense: Mapped[Decimal | None] = mapped_column(BigMoney)
@@ -186,6 +188,26 @@ class Fundamental(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     operating_cf: Mapped[Decimal | None] = mapped_column(BigMoney)
     capex: Mapped[Decimal | None] = mapped_column(BigMoney)
 
+    source: Mapped[str] = mapped_column(String(32))
+
+
+class Estimate(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Forward-looking estimates (forward EPS/PE, PEG) — a rolling snapshot log keyed
+    by (company_id, as_of_date). The weakest data source; signals renormalize on nulls."""
+
+    __tablename__ = "estimates"
+    __table_args__ = (
+        UniqueConstraint("company_id", "as_of_date", name="uq_estimates_asof"),
+        Index("ix_estimates_company_date", "company_id", "as_of_date"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
+    )
+    as_of_date: Mapped[date] = mapped_column(Date)
+    forward_eps: Mapped[Decimal | None] = mapped_column(Money)
+    forward_pe: Mapped[Decimal | None] = mapped_column(Money)
+    peg: Mapped[Decimal | None] = mapped_column(Money)
     source: Mapped[str] = mapped_column(String(32))
 
 

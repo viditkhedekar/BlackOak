@@ -37,6 +37,8 @@ class FundamentalSnapshot:
     revenue: float | None = None
     gross_profit: float | None = None
     ebitda: float | None = None
+    ebit: float | None = None
+    operating_income: float | None = None
     net_income: float | None = None
     eps_diluted: float | None = None
     interest_expense: float | None = None
