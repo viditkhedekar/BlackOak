@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { CandlestickChart } from "@/components/charts/CandlestickChart";
+import { ScorePanel } from "@/components/features/ScorePanel";
 import type { PriceSeries } from "@/lib/api/client";
 import { useCompany, usePrices } from "@/lib/hooks/useCompanies";
 
@@ -95,6 +96,8 @@ export default function CompanyPage() {
               <CandlestickChart points={prices.data.points} />
             )}
           </div>
+
+          <ScorePanel symbol={symbol} />
         </>
       )}
     </div>

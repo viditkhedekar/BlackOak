@@ -13,6 +13,20 @@ export type CompanyList = JSON200<"/api/v1/companies", "get">;
 export type CompanySummary = CompanyList["items"][number];
 export type CompanyDetail = JSON200<"/api/v1/companies/{symbol}", "get">;
 export type PriceSeries = JSON200<"/api/v1/companies/{symbol}/prices", "get">;
+export type ScreenerResponse = JSON200<"/api/v1/screener", "get">;
+export type ScreenerRow = ScreenerResponse["items"][number];
+export type CompanyScoreDetail = JSON200<"/api/v1/companies/{symbol}/scores", "get">;
+
+export const PROFILES = ["conservative", "balanced", "aggressive"] as const;
+export type Profile = (typeof PROFILES)[number];
+
+export interface ScreenerParams {
+  profile: string;
+  sortBy: string;
+  order: "asc" | "desc";
+  sector?: string;
+  minScore?: number;
+}
 
 async function get<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(`${API_URL}${path}`);
@@ -33,4 +47,17 @@ export const api = {
   company: (symbol: string) => get<CompanyDetail>(`/api/v1/companies/${symbol}`),
   prices: (symbol: string, range: string) =>
     get<PriceSeries>(`/api/v1/companies/${symbol}/prices`, { range }),
+  screener: (p: ScreenerParams) => {
+    const params: Record<string, string> = {
+      profile: p.profile,
+      sortBy: p.sortBy,
+      order: p.order,
+      limit: "100",
+    };
+    if (p.sector) params.sector = p.sector;
+    if (p.minScore != null) params.minScore = String(p.minScore);
+    return get<ScreenerResponse>("/api/v1/screener", params);
+  },
+  scores: (symbol: string, profile: string) =>
+    get<CompanyScoreDetail>(`/api/v1/companies/${symbol}/scores`, { profile }),
 };

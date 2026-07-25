@@ -1,7 +1,24 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api/client";
+import { api, type ScreenerParams } from "@/lib/api/client";
+
+export function useScreener(params: ScreenerParams) {
+  return useQuery({
+    queryKey: ["screener", params],
+    queryFn: () => api.screener(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
+export function useScores(symbol: string, profile: string) {
+  return useQuery({
+    queryKey: ["scores", symbol, profile],
+    queryFn: () => api.scores(symbol, profile),
+    enabled: Boolean(symbol),
+    retry: false,
+  });
+}
 
 export function useCompanies(query: string) {
   return useQuery({
