@@ -47,7 +47,7 @@ plugins = ["pydantic.mypy"]
 files = ["app", "worker.py"]
 
 [[tool.mypy.overrides]]
-module = ["apscheduler.*", "yfinance.*"]
+module = ["apscheduler.*", "yfinance.*", "exchange_calendars.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
