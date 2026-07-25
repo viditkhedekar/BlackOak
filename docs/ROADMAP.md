@@ -15,7 +15,8 @@ The full journey from empty repo to polished v1.0, in gated phases. A phase is *
 - **Testing:** one real unit test each side; CI enforces lint/type/test.
 - **Gate:** production URL renders data fetched from the deployed API.
 
-### Phase 1 — Market Data Foundation (M, ~2 weeks)
+### Phase 1 — Market Data Foundation (M, ~2 weeks) — ✅ BUILT
+- **Status:** implemented & verified. 503 S&P 500 constituents seeded (11 GICS sectors); provider abstraction with yfinance + Alpaca IEX adapters; idempotent upsert pipeline with per-symbol isolation + failure-ratio abort; XNYS-aware 16:30 ET EOD job; `/companies`, `/companies/{symbol}`, `/companies/{symbol}/prices`; React research search + lightweight-charts candlestick company page. 27 backend tests green. Representative backfill run: 25 symbols × 1y batched, 6,250 rows, zero failures, re-run produced zero duplicates. Remaining before Phase 2: full 503 × 2y production backfill + observe 3 consecutive green nightly runs.
 - **Objectives:** universe + prices flowing on a schedule through the provider abstraction.
 - **DB:** companies, prices_daily, benchmarks(+prices), job_runs usage.
 - **Backend:** `MarketDataProvider` Protocol; Alpaca + yfinance adapters; universe seeder (S&P 500 constituents); backfill CLI (2y daily bars, batched, rate-limited); EOD ingest service (validation: OHLC sanity, non-negative volume, gap detection vs XNYS calendar; dedupe via upsert on PK; per-symbol retry w/ tenacity exponential backoff; symbol-level failure isolation — one bad ticker never kills the run); worker process with APScheduler running the 16:30 ET job; `/companies`, `/companies/{symbol}/prices` endpoints.
