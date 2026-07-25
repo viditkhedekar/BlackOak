@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: blackoak
+      POSTGRES_PASSWORD: blackoak
+      POSTGRES_DB: blackoak
+    ports:
+      # 5434 on the host: 5432/5433 are commonly taken by other local Postgres instances
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U blackoak"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
