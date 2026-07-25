@@ -22,9 +22,16 @@ from app.db.session import get_session_factory
 from app.services.benchmarks import ingest_benchmarks, seed_benchmarks
 from app.services.fundamentals_ingest import ingest_fundamentals
 from app.services.ingest import ingest_prices
-from app.services.providers import get_fundamentals_provider, get_market_data_provider
+from app.services.intraday_ingest import ingest_intraday
+from app.services.macro_ingest import ingest_macro
+from app.services.providers import (
+    get_fundamentals_provider,
+    get_intraday_provider,
+    get_macro_provider,
+    get_market_data_provider,
+)
 from app.services.scoring import score_universe_job
-from app.services.universe import seed_universe
+from app.services.universe import seed_etfs, seed_universe
 
 log = structlog.get_logger()
 
@@ -33,8 +40,10 @@ async def _seed() -> None:
     factory = get_session_factory()
     async with factory() as session:
         count = await seed_universe(session)
+        etfs = await seed_etfs(session)
         bench = await seed_benchmarks(session)
-    log.info("cli.seed.done", companies=count, benchmarks=bench)
+        await session.commit()
+    log.info("cli.seed.done", companies=count, etfs=etfs, benchmarks=bench)
 
 
 async def _backfill(years: int, symbols: list[str] | None, batch: int) -> None:
@@ -76,6 +85,45 @@ async def _score() -> None:
     log.info("cli.score.done", rows=written)
 
 
+async def _backfill_intraday(days: int, symbols: list[str] | None, interval: str) -> None:
+    settings = get_settings()
+    provider = get_intraday_provider(settings)
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days)
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await ingest_intraday(
+            session, provider, start, end, interval=interval, symbols=symbols,
+            job_name="backfill_intraday",
+        )
+    log.info(
+        "cli.backfill_intraday.done",
+        requested=report.requested,
+        bars=report.bars_written,
+        failed=len(report.failed),
+        interval=interval,
+    )
+
+
+async def _macro(years: int) -> None:
+    settings = get_settings()
+    fred = get_macro_provider(settings)
+    # VIX comes from yfinance (FRED's keyless feed doesn't carry ^VIX).
+    from app.adapters.yfinance_data import YFinanceMarketData
+
+    end = datetime.now(UTC).date()
+    start = end - timedelta(days=round(years * 365.25))
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await ingest_macro(session, fred, YFinanceMarketData(), start, end)
+    log.info(
+        "cli.macro.done",
+        points=report.total_points,
+        series=report.series_written,
+        failed=report.failed,
+    )
+
+
 async def _fundamentals(symbols: list[str] | None) -> None:
     settings = get_settings()
     provider = get_fundamentals_provider(settings)
@@ -113,6 +161,14 @@ def main() -> None:
 
     sub.add_parser("score", help="Compute research scores for the whole universe")
 
+    bfi = sub.add_parser("backfill-intraday", help="Backfill intraday bars (SP500 + ETFs)")
+    bfi.add_argument("--days", type=int, default=5)
+    bfi.add_argument("--symbols", type=str, default=None, help="comma-separated; default all")
+    bfi.add_argument("--interval", type=str, default="15Min", help="15Min|30Min|1Hour")
+
+    mac = sub.add_parser("macro", help="Ingest FRED rate/curve/inflation series + VIX")
+    mac.add_argument("--years", type=int, default=5)
+
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(_seed())
@@ -122,6 +178,12 @@ def main() -> None:
         asyncio.run(_fundamentals(_parse_symbols(args.symbols)))
     elif args.command == "score":
         asyncio.run(_score())
+    elif args.command == "backfill-intraday":
+        asyncio.run(
+            _backfill_intraday(args.days, _parse_symbols(args.symbols), args.interval)
+        )
+    elif args.command == "macro":
+        asyncio.run(_macro(args.years))
 
 
 if __name__ == "__main__":

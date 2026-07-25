@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import statistics
 from collections.abc import Sequence
+from itertools import pairwise
 
 
 def safe_div(numerator: float | None, denominator: float | None) -> float | None:
@@ -20,7 +21,7 @@ def safe_div(numerator: float | None, denominator: float | None) -> float | None
 def daily_returns(prices: Sequence[float]) -> list[float]:
     """Simple day-over-day returns. Skips any non-positive prior price."""
     out: list[float] = []
-    for prev, cur in zip(prices, prices[1:], strict=False):
+    for prev, cur in pairwise(prices):
         if prev > 0:
             out.append(cur / prev - 1.0)
     return out

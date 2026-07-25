@@ -13,10 +13,17 @@ import structlog
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-from app.domain.market_data import Bar
+from app.domain.market_data import Bar, IntradayBar
+
+# Intraday intervals the strategy engine understands, mapped to Alpaca timeframes.
+_INTRADAY_TIMEFRAMES = {
+    "15Min": TimeFrame(15, TimeFrameUnit.Minute),
+    "30Min": TimeFrame(30, TimeFrameUnit.Minute),
+    "1Hour": TimeFrame(1, TimeFrameUnit.Hour),
+}
 
 log = structlog.get_logger()
 
@@ -66,3 +73,43 @@ class AlpacaMarketData:
             )
             for row in rows
         ]
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def fetch_intraday_bars(
+        self, symbols: list[str], start: datetime, end: datetime, interval: str = "15Min"
+    ) -> dict[str, list[IntradayBar]]:
+        """Batched intraday bars — one request covers the whole symbol list, which is
+        what keeps 503 tickers inside the free-tier rate limit."""
+        timeframe = _INTRADAY_TIMEFRAMES.get(interval)
+        if timeframe is None:
+            raise ValueError(f"Unsupported intraday interval: {interval}")
+
+        request = StockBarsRequest(
+            symbol_or_symbols=symbols,
+            timeframe=timeframe,
+            start=start,
+            end=end,
+            feed=DataFeed.IEX,
+        )
+        barset = self._client.get_stock_bars(request)
+        data = barset.data  # type: ignore[union-attr]
+        return {
+            symbol: [
+                IntradayBar(
+                    symbol=symbol,
+                    ts=row.timestamp,
+                    open=_to_decimal(row.open),
+                    high=_to_decimal(row.high),
+                    low=_to_decimal(row.low),
+                    close=_to_decimal(row.close),
+                    volume=int(row.volume),
+                )
+                for row in rows
+            ]
+            for symbol, rows in data.items()
+        }

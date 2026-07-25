@@ -90,6 +90,39 @@ class PriceDaily(Base):
     source: Mapped[str] = mapped_column(String(32))
 
 
+class BarIntraday(Base):
+    """Intraday OHLCV (15-min default). Composite PK (company_id, ts, interval);
+    ~120-day retention via the nightly prune — this is working data for the
+    strategy engine, not an archive (daily history lives in prices_daily)."""
+
+    __tablename__ = "bars_intraday"
+    __table_args__ = (
+        Index("ix_bars_intraday_ts_brin", "ts", postgresql_using="brin"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE"), primary_key=True
+    )
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    interval: Mapped[str] = mapped_column(String(8), primary_key=True, default="15Min")
+    open: Mapped[Decimal] = mapped_column(Money)
+    high: Mapped[Decimal] = mapped_column(Money)
+    low: Mapped[Decimal] = mapped_column(Money)
+    close: Mapped[Decimal] = mapped_column(Money)
+    volume: Mapped[int] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(32))
+
+
+class MacroSeries(Base):
+    """Macro observations keyed by (series_id, date): FEDFUNDS, T10Y2Y, CPIAUCSL, VIX."""
+
+    __tablename__ = "macro_series"
+
+    series_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, primary_key=True)
+    value: Mapped[Decimal] = mapped_column(Numeric(18, 6))
+
+
 class Benchmark(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Reference series (SPY, later sector ETFs) for alpha/beta/relative charts."""
 

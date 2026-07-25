@@ -4,7 +4,9 @@ from decimal import Decimal
 from app.domain.market_data import Bar, validate_bars
 
 
-def _bar(day: int, o: str, h: str, low: str, c: str, adj: str | None = None, vol: int = 1000) -> Bar:
+def _bar(
+    day: int, o: str, h: str, low: str, c: str, adj: str | None = None, vol: int = 1000
+) -> Bar:
     return Bar(
         symbol="TEST",
         date=date(2026, 1, day),

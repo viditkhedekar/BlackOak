@@ -171,7 +171,9 @@ def _value(snap: FundamentalSnapshot, inputs: FactorInputs) -> dict[str, float |
     }
 
 
-def _quality(annual: list[FundamentalSnapshot], snap: FundamentalSnapshot) -> dict[str, float | None]:
+def _quality(
+    annual: list[FundamentalSnapshot], snap: FundamentalSnapshot
+) -> dict[str, float | None]:
     invested_capital = (
         (snap.total_debt or 0) + snap.equity if snap.equity is not None else None
     )

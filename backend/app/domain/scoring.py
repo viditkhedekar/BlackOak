@@ -1,6 +1,6 @@
 """Deterministic scoring pipeline (docs/SCHEMA.md §7) — the platform's brain.
 
-For each factor, within each sector: winsorize (1/99) → z-score → map to a 0–100
+For each factor, within each sector: winsorize (1/99) → z-score → map to a 0-100
 percentile via the normal CDF. A category is the mean of its available factor scores;
 the composite is a risk-profile-weighted mean of the available categories. Pure and
 fully golden-testable — no I/O.
@@ -61,7 +61,7 @@ class CompanyFactors:
 @dataclass(frozen=True, slots=True)
 class FactorDetail:
     raw: float | None
-    score: float | None  # 0–100 sector percentile (direction-adjusted)
+    score: float | None  # 0-100 sector percentile (direction-adjusted)
 
 
 @dataclass(frozen=True, slots=True)

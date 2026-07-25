@@ -2,6 +2,24 @@
 
 The full journey from empty repo to polished v1.0, in gated phases. A phase is *done* only when its gate passes — no skipping ahead.
 
+---
+
+## v2 — Autonomous Intraday Quant (current direction)
+
+As of 2026-07-25 the product was repositioned (ADR-0007) from a multi-user EOD research tool into a **single-user, fully autonomous intraday paper-trading strategy** that beats-or-tries-to-beat the S&P 500 via weighted scoring over six signal families (valuation, fundamentals, momentum, technical, risk, macro). No sentiment, no user-created strategies, no approval gates. Phases 0–2 below (data pipeline + deterministic research score) are **reused wholesale**; v1 phases 3–8 (Clerk auth, watchlists, approval-gated rebalancing, weekly portfolio engine, AI layer) are **superseded/postponed**. The v2 phases:
+
+- **R0 — Intraday data spine — ✅ BUILT (2026-07-25).** Migration 0004 (`bars_intraday` 15-min OHLCV, ~120-day retention + BRIN(ts); `macro_series`). `IntradayBarsProvider` + `MacroDataProvider` ports; Alpaca batched intraday adapter, keyless FRED adapter (FEDFUNDS/T10Y2Y/CPIAUCSL), VIX via yfinance. `services/intraday_ingest.py` (batched fetch, per-symbol validate/upsert isolation, failure-ratio abort) + `services/macro_ingest.py`. SPY + RSP + 11 sector SPDRs seeded as `universe='ETF'`. 15-min poll job + nightly retention prune. CLI `backfill-intraday`, `macro`. **Gate met:** 534 bars across AAPL/MSFT/SPY/XLK, zero failures, idempotent re-run (534→534, no dupes), full 09:30→16:00 15-min grid with zero gaps on 2026-07-24; all four macro series current.
+- **R1 — Signal engines** (`domain/indicators.py` + `domain/signals/`, golden-tested vs reference values; migration 0005 adds EBIT/operating income + `estimates`).
+- **R2 — Regime engine + score fusion** (migration 0006: `regime_snapshots`, `strategy_scores`, `strategy_config`; `domain/regime.py`, `domain/strategy.py`).
+- **R3 — Backtester** (`backend/backtest/` over the shared `DataWindow`; migration 0007; walk-forward + no-lookahead; **built before the live loop**, ADR-0008).
+- **R4 — Autonomous execution engine** (migration 0008: positions/orders/executions/`position_theses`/`trade_decisions`; `BrokerClient` Alpaca paper adapter with hard paper-URL assert; 30-min decision cycle).
+- **R5 — Dashboard** (Command Center, Decision Journal, Rankings, Signal Explorer, Portfolio & Risk, Performance vs SPY+RSP, Macro & Regime, Backtest Lab, System Health).
+- **R6 — Shadow month** (30 hands-off trading days; honest performance report).
+
+Full detail lives in the approved plan; the sections below are the original v1 roadmap, retained for provenance.
+
+---
+
 ## 5. Phased Roadmap
 
 > Complexity: S/M/L/XL. Timeline assumes solo, ~10–15 focused hrs/week. Every phase ends with a **gate** — do not proceed until it passes.

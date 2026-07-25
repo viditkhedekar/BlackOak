@@ -7,7 +7,7 @@ in isolation (see docs/ARCHITECTURE.md, module rule 1).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 # A single-day move larger than this is implausible for a liquid equity and almost
@@ -30,6 +30,19 @@ class Bar:
 
 
 @dataclass(frozen=True, slots=True)
+class IntradayBar:
+    """One symbol's OHLCV for one intraday interval (ts = interval start, UTC)."""
+
+    symbol: str
+    ts: datetime
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int
+
+
+@dataclass(frozen=True, slots=True)
 class ValidatedBars:
     """Outcome of validating a symbol's bars: clean rows kept, bad rows quarantined."""
 
@@ -37,6 +50,13 @@ class ValidatedBars:
     valid: list[Bar]
     rejected: list[tuple[Bar, str]]  # (bar, reason)
     flagged: list[tuple[Bar, str]]  # kept, but worth a human glance
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedIntradayBars:
+    symbol: str
+    valid: list[IntradayBar]
+    rejected: list[tuple[IntradayBar, str]]
 
 
 def _is_coherent(bar: Bar) -> str | None:
@@ -85,3 +105,39 @@ def validate_bars(symbol: str, bars: list[Bar]) -> ValidatedBars:
         prev_close = bar.close
 
     return ValidatedBars(symbol=symbol, valid=valid, rejected=rejected, flagged=flagged)
+
+
+def _intraday_coherence(bar: IntradayBar) -> str | None:
+    prices = (bar.open, bar.high, bar.low, bar.close)
+    if any(p.is_nan() for p in prices):
+        return "nan_value"
+    if any(p <= 0 for p in prices):
+        return "non_positive_price"
+    if bar.volume < 0:
+        return "negative_volume"
+    if bar.high < bar.low:
+        return "high_below_low"
+    if not (bar.low <= bar.open <= bar.high):
+        return "open_outside_range"
+    if not (bar.low <= bar.close <= bar.high):
+        return "close_outside_range"
+    if bar.ts.tzinfo is None:
+        return "naive_timestamp"
+    return None
+
+
+def validate_intraday_bars(symbol: str, bars: list[IntradayBar]) -> ValidatedIntradayBars:
+    """Validate intraday bars: structurally impossible rows are quarantined.
+
+    No extreme-move flagging here — legitimate intraday gaps (open auctions, halts)
+    would drown the signal; split detection belongs to the daily pipeline.
+    """
+    valid: list[IntradayBar] = []
+    rejected: list[tuple[IntradayBar, str]] = []
+    for bar in sorted(bars, key=lambda b: b.ts):
+        reason = _intraday_coherence(bar)
+        if reason is not None:
+            rejected.append((bar, reason))
+        else:
+            valid.append(bar)
+    return ValidatedIntradayBars(symbol=symbol, valid=valid, rejected=rejected)

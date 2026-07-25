@@ -14,6 +14,7 @@ import structlog
 import yfinance as yf
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.domain.macro import MacroPoint
 from app.domain.market_data import Bar
 
 log = structlog.get_logger()
@@ -68,3 +69,31 @@ class YFinanceMarketData:
                 )
             )
         return bars
+
+    @retry(
+        retry=retry_if_exception_type((ConnectionError, TimeoutError)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def fetch_vix(self, start: date, end: date) -> list[MacroPoint]:
+        """VIX daily close as a macro series (FRED's keyless feed doesn't carry ^VIX)."""
+        frame = yf.Ticker("^VIX").history(
+            start=start.isoformat(),
+            end=(end + timedelta(days=1)).isoformat(),
+            interval="1d",
+            auto_adjust=False,
+            actions=False,
+            raise_errors=False,
+        )
+        if frame is None or frame.empty:
+            log.info("yfinance.no_data", symbol="^VIX", start=str(start), end=str(end))
+            return []
+
+        points: list[MacroPoint] = []
+        for ts, row in frame.iterrows():
+            close = _to_decimal(row["Close"])
+            if close.is_nan():
+                continue
+            points.append(MacroPoint(series_id="VIX", date=ts.date(), value=close))
+        return points

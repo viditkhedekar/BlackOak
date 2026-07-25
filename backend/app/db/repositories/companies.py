@@ -71,9 +71,15 @@ class CompanyRepository:
         return int(result.scalar_one())
 
     async def active_symbols(self, universe: str = "SP500") -> list[tuple[uuid.UUID, str]]:
+        return await self.active_symbols_in([universe])
+
+    async def active_symbols_in(
+        self, universes: list[str]
+    ) -> list[tuple[uuid.UUID, str]]:
+        """Active symbols across several universes (e.g. SP500 + ETF for intraday)."""
         result = await self._session.execute(
             select(Company.id, Company.symbol)
-            .where(Company.is_active.is_(True), Company.universe == universe)
+            .where(Company.is_active.is_(True), Company.universe.in_(universes))
             .order_by(Company.symbol)
         )
         return [(row[0], row[1]) for row in result.all()]
