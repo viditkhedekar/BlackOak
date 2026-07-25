@@ -3,7 +3,17 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Index, Numeric, String, Text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -103,3 +113,72 @@ class BenchmarkPrice(Base):
     adj_close: Mapped[Decimal] = mapped_column(Money)
     volume: Mapped[int] = mapped_column(BigInteger)
     source: Mapped[str] = mapped_column(String(32))
+
+
+class Fundamental(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One fiscal period's statement snapshot. Raw inputs to the scoring engine."""
+
+    __tablename__ = "fundamentals"
+    __table_args__ = (
+        UniqueConstraint("company_id", "period", "fiscal_date", name="uq_fundamentals_period"),
+        Index("ix_fundamentals_company_date", "company_id", "fiscal_date"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
+    )
+    period: Mapped[str] = mapped_column(String(4))  # "FY" or "Q"
+    fiscal_date: Mapped[date] = mapped_column(Date)
+    reported_at: Mapped[date | None] = mapped_column(Date)
+
+    # Income statement
+    revenue: Mapped[Decimal | None] = mapped_column(Money)
+    gross_profit: Mapped[Decimal | None] = mapped_column(Money)
+    ebitda: Mapped[Decimal | None] = mapped_column(Money)
+    net_income: Mapped[Decimal | None] = mapped_column(Money)
+    eps_diluted: Mapped[Decimal | None] = mapped_column(Money)
+    interest_expense: Mapped[Decimal | None] = mapped_column(Money)
+    # Balance sheet
+    total_assets: Mapped[Decimal | None] = mapped_column(Money)
+    current_assets: Mapped[Decimal | None] = mapped_column(Money)
+    current_liabilities: Mapped[Decimal | None] = mapped_column(Money)
+    total_debt: Mapped[Decimal | None] = mapped_column(Money)
+    cash: Mapped[Decimal | None] = mapped_column(Money)
+    equity: Mapped[Decimal | None] = mapped_column(Money)
+    shares_out: Mapped[Decimal | None] = mapped_column(Money)
+    # Cash flow
+    operating_cf: Mapped[Decimal | None] = mapped_column(Money)
+    capex: Mapped[Decimal | None] = mapped_column(Money)
+
+    source: Mapped[str] = mapped_column(String(32))
+
+
+class ResearchScore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Deterministic engine output. `inputs` holds every raw factor value so any
+    score is fully reproducible (docs/SCHEMA.md §7)."""
+
+    __tablename__ = "research_scores"
+    __table_args__ = (
+        UniqueConstraint("company_id", "as_of_date", "profile", name="uq_scores_asof"),
+        Index("ix_scores_asof_composite", "as_of_date", "composite"),
+    )
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
+    )
+    as_of_date: Mapped[date] = mapped_column(Date)
+    profile: Mapped[str] = mapped_column(String(16))  # conservative|balanced|aggressive
+
+    financial_health: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    growth: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    value: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    quality: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    profitability: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    momentum: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    volatility: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    risk: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    composite: Mapped[float | None] = mapped_column(Numeric(6, 3))
+
+    data_completeness: Mapped[float] = mapped_column(Numeric(5, 4), default=0)
+    engine_version: Mapped[str] = mapped_column(String(16))
+    inputs: Mapped[dict[str, Any]] = mapped_column(JSONB)
