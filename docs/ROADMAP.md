@@ -24,7 +24,8 @@ The full journey from empty repo to polished v1.0, in gated phases. A phase is *
 - **Testing:** adapter tests against recorded HTTP fixtures (respx); validation unit tests (bad rows quarantined, not inserted); idempotency test (re-run ingest → zero dupes).
 - **Gate:** 500 symbols × 2y backfilled; nightly job runs green 3 consecutive days; job_runs visible.
 
-### Phase 2 — Deterministic Research Engine (L, ~2–3 weeks)
+### Phase 2 — Deterministic Research Engine (L, ~2–3 weeks) — ✅ BUILT
+- **Status:** implemented & verified. migration 0003 (fundamentals w/ NUMERIC(24,4), research_scores w/ inputs jsonb); pure `domain/factors.py` (all 8 categories) + `domain/scoring.py` (winsorize→sector z-score→normal-CDF percentile→category→profile-weighted composite, ENGINE_VERSION 1.0.0) locked by golden + property tests; yfinance fundamentals adapter + ingest; scoring service persists 503×3 profiles = 1509 rows; EOD job chains ingest→score, nightly 02:00 does fundamentals+rescore; `/screener` + `/companies/{symbol}/scores` (factor breakdown); frontend screener heat-table + ECharts radar + factor drill-down. Reproducibility gate passed (AAPL financial_health = mean of stored factor scores = 17.9). 44 backend tests green. **Remaining before Phase 3:** full-universe fundamentals ingest (only ~5 symbols ingested locally; sector cohorts are tiny until broader coverage).
 - **Objectives:** the platform's brain — 8-category scoring, fully explainable. **No AI.**
 - **DB:** fundamentals, research_scores.
 - **Backend:** fundamentals ingest (yfinance adapter, nightly rotating batches); `domain/factors.py` (pure factor computations) + `domain/scoring.py` (winsorize 1/99 → sector-relative z-score → percentile 0–100 → weighted composite; weights per risk profile); scoring job after EOD ingest; screener endpoint (filter/sort on scores); scores + factor breakdown endpoints.
