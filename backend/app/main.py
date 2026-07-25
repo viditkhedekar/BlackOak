@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import api_router
+from app.api.v1 import health as health_module
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 
@@ -23,8 +24,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     application.include_router(api_router, prefix="/api/v1")
-    # Unversioned alias so infra health checks don't depend on the API version.
-    application.include_router(api_router)
+    # Unversioned health alias so infra probes don't depend on the API version.
+    application.include_router(health_module.router, tags=["system"])
     return application
 
 

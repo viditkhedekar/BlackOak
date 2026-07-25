@@ -58,6 +58,18 @@ class CompanyRepository:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
+    async def count(self, query: str | None, sector: str | None) -> int:
+        stmt = select(func.count()).select_from(Company).where(Company.is_active.is_(True))
+        if query:
+            like = f"%{query.upper()}%"
+            stmt = stmt.where(
+                func.upper(Company.symbol).like(like) | func.upper(Company.name).like(like)
+            )
+        if sector:
+            stmt = stmt.where(Company.sector == sector)
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one())
+
     async def active_symbols(self, universe: str = "SP500") -> list[tuple[uuid.UUID, str]]:
         result = await self._session.execute(
             select(Company.id, Company.symbol)
