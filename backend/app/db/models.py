@@ -299,3 +299,47 @@ class StrategyConfig(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     params: Mapped[dict[str, Any]] = mapped_column(JSONB)
     activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BacktestRun(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One backtest execution. `metrics` holds the full performance report; the run is
+    reproducible from (config_version, start, end) over a frozen data snapshot."""
+
+    __tablename__ = "backtest_runs"
+
+    start_date: Mapped[date] = mapped_column(Date)
+    end_date: Mapped[date] = mapped_column(Date)
+    config_version: Mapped[str] = mapped_column(String(32))
+    initial_cash: Mapped[Decimal] = mapped_column(Money)
+    universe_size: Mapped[int] = mapped_column(Integer)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class BacktestTrade(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "backtest_trades"
+    __table_args__ = (Index("ix_backtest_trades_run", "run_id"),)
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("backtest_runs.id", ondelete="CASCADE")
+    )
+    symbol: Mapped[str] = mapped_column(String(16))
+    side: Mapped[str] = mapped_column(String(4))
+    trade_date: Mapped[date] = mapped_column(Date)
+    shares: Mapped[Decimal] = mapped_column(Money)
+    price: Mapped[Decimal] = mapped_column(Money)
+    reason: Mapped[str] = mapped_column(String(32))
+    realized_pnl: Mapped[Decimal] = mapped_column(Money)
+
+
+class BacktestEquity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "backtest_equity"
+    __table_args__ = (Index("ix_backtest_equity_run_day", "run_id", "day"),)
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("backtest_runs.id", ondelete="CASCADE")
+    )
+    day: Mapped[date] = mapped_column(Date)
+    equity: Mapped[Decimal] = mapped_column(Money)
+    cash: Mapped[Decimal] = mapped_column(Money)
+    regime: Mapped[str] = mapped_column(String(16))
+    positions: Mapped[int] = mapped_column(Integer)

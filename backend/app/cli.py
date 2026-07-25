@@ -119,6 +119,33 @@ async def _signals() -> None:
     )
 
 
+async def _backtest(start: str, end: str, cash: float) -> None:
+    from datetime import date
+
+    from app.backtest.runner import run_and_persist
+
+    s = date.fromisoformat(start)
+    e = date.fromisoformat(end)
+    factory = get_session_factory()
+    async with factory() as session:
+        run_id, metrics = await run_and_persist(session, s, e, cash)
+    spy = next((b for b in metrics.benchmarks if b.name == "SPY"), None)
+    log.info(
+        "cli.backtest.done",
+        run_id=str(run_id),
+        days=metrics.trading_days,
+        total_return=round(metrics.total_return or 0.0, 4),
+        cagr=round(metrics.cagr or 0.0, 4),
+        sharpe=round(metrics.sharpe or 0.0, 3),
+        max_drawdown=round(metrics.max_drawdown or 0.0, 4),
+        trades=metrics.trades,
+        win_rate=round(metrics.win_rate or 0.0, 3),
+        cost_drag=metrics.cost_drag,
+        vs_spy_excess=round(spy.excess_return or 0.0, 4) if spy else None,
+        regime_days=metrics.regime_days,
+    )
+
+
 async def _macro(years: int) -> None:
     settings = get_settings()
     fred = get_macro_provider(settings)
@@ -185,6 +212,11 @@ def main() -> None:
 
     sub.add_parser("signals", help="Run the v2 signal pipeline (regime + fused scores)")
 
+    bt = sub.add_parser("backtest", help="Run a daily backtest of the v2 strategy")
+    bt.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
+    bt.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
+    bt.add_argument("--cash", type=float, default=100_000.0)
+
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(_seed())
@@ -202,6 +234,8 @@ def main() -> None:
         asyncio.run(_macro(args.years))
     elif args.command == "signals":
         asyncio.run(_signals())
+    elif args.command == "backtest":
+        asyncio.run(_backtest(args.start, args.end, args.cash))
 
 
 if __name__ == "__main__":
