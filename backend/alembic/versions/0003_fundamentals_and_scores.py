@@ -1,14 +1,15 @@
 """fundamentals and research scores
 
-Revision ID: fa8b6b57af22
+Revision ID: c96588ca879a
 Revises: 0002
-Create Date: 2026-07-25 13:57:10.200571
+Create Date: 2026-07-25 14:04:34.474456
 """
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0003"
 down_revision: str | None = "0002"
@@ -23,21 +24,21 @@ def upgrade() -> None:
     sa.Column('period', sa.String(length=4), nullable=False),
     sa.Column('fiscal_date', sa.Date(), nullable=False),
     sa.Column('reported_at', sa.Date(), nullable=True),
-    sa.Column('revenue', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('gross_profit', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('ebitda', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('net_income', sa.Numeric(precision=18, scale=6), nullable=True),
+    sa.Column('revenue', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('gross_profit', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('ebitda', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('net_income', sa.Numeric(precision=24, scale=4), nullable=True),
     sa.Column('eps_diluted', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('interest_expense', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('total_assets', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('current_assets', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('current_liabilities', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('total_debt', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('cash', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('equity', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('shares_out', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('operating_cf', sa.Numeric(precision=18, scale=6), nullable=True),
-    sa.Column('capex', sa.Numeric(precision=18, scale=6), nullable=True),
+    sa.Column('interest_expense', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('total_assets', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('current_assets', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('current_liabilities', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('total_debt', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('cash', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('equity', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('shares_out', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('operating_cf', sa.Numeric(precision=24, scale=4), nullable=True),
+    sa.Column('capex', sa.Numeric(precision=24, scale=4), nullable=True),
     sa.Column('source', sa.String(length=32), nullable=False),
     sa.Column('id', sa.UUID(), server_default=sa.text('gen_random_uuid()'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),

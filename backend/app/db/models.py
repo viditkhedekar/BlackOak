@@ -23,6 +23,9 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 # Money/price/quantity precision (see docs/SCHEMA.md conventions).
 Money = Numeric(18, 6)
+# Balance-sheet/statement absolutes reach into the trillions (big-bank total assets),
+# which overflow Money's 12-digit integer part — give fundamentals room.
+BigMoney = Numeric(24, 4)
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -132,23 +135,23 @@ class Fundamental(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     reported_at: Mapped[date | None] = mapped_column(Date)
 
     # Income statement
-    revenue: Mapped[Decimal | None] = mapped_column(Money)
-    gross_profit: Mapped[Decimal | None] = mapped_column(Money)
-    ebitda: Mapped[Decimal | None] = mapped_column(Money)
-    net_income: Mapped[Decimal | None] = mapped_column(Money)
+    revenue: Mapped[Decimal | None] = mapped_column(BigMoney)
+    gross_profit: Mapped[Decimal | None] = mapped_column(BigMoney)
+    ebitda: Mapped[Decimal | None] = mapped_column(BigMoney)
+    net_income: Mapped[Decimal | None] = mapped_column(BigMoney)
     eps_diluted: Mapped[Decimal | None] = mapped_column(Money)
-    interest_expense: Mapped[Decimal | None] = mapped_column(Money)
+    interest_expense: Mapped[Decimal | None] = mapped_column(BigMoney)
     # Balance sheet
-    total_assets: Mapped[Decimal | None] = mapped_column(Money)
-    current_assets: Mapped[Decimal | None] = mapped_column(Money)
-    current_liabilities: Mapped[Decimal | None] = mapped_column(Money)
-    total_debt: Mapped[Decimal | None] = mapped_column(Money)
-    cash: Mapped[Decimal | None] = mapped_column(Money)
-    equity: Mapped[Decimal | None] = mapped_column(Money)
-    shares_out: Mapped[Decimal | None] = mapped_column(Money)
+    total_assets: Mapped[Decimal | None] = mapped_column(BigMoney)
+    current_assets: Mapped[Decimal | None] = mapped_column(BigMoney)
+    current_liabilities: Mapped[Decimal | None] = mapped_column(BigMoney)
+    total_debt: Mapped[Decimal | None] = mapped_column(BigMoney)
+    cash: Mapped[Decimal | None] = mapped_column(BigMoney)
+    equity: Mapped[Decimal | None] = mapped_column(BigMoney)
+    shares_out: Mapped[Decimal | None] = mapped_column(BigMoney)
     # Cash flow
-    operating_cf: Mapped[Decimal | None] = mapped_column(Money)
-    capex: Mapped[Decimal | None] = mapped_column(Money)
+    operating_cf: Mapped[Decimal | None] = mapped_column(BigMoney)
+    capex: Mapped[Decimal | None] = mapped_column(BigMoney)
 
     source: Mapped[str] = mapped_column(String(32))
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Protocol, runtime_checkable
 
+from app.domain.fundamentals import FundamentalRecord
 from app.domain.market_data import Bar
 
 
@@ -24,4 +25,15 @@ class MarketDataProvider(Protocol):
         Raises on transport errors so the caller's retry/isolation logic can act;
         returns an empty list when the symbol legitimately has no data in range.
         """
+        ...
+
+
+@runtime_checkable
+class FundamentalsProvider(Protocol):
+    """Source of annual statement snapshots. Implementations: yfinance, (future) FMP."""
+
+    name: str
+
+    def fetch_annual_fundamentals(self, symbol: str) -> list[FundamentalRecord]:
+        """Return annual fundamentals (ascending by fiscal_date). Empty list if none."""
         ...

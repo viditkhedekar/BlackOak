@@ -20,8 +20,9 @@ from app.core.logging import configure_logging
 from app.db.repositories.companies import CompanyRepository
 from app.db.session import get_session_factory
 from app.services.benchmarks import ingest_benchmarks, seed_benchmarks
+from app.services.fundamentals_ingest import ingest_fundamentals
 from app.services.ingest import ingest_prices
-from app.services.providers import get_market_data_provider
+from app.services.providers import get_fundamentals_provider, get_market_data_provider
 from app.services.universe import seed_universe
 
 log = structlog.get_logger()
@@ -67,6 +68,20 @@ async def _backfill(years: int, symbols: list[str] | None, batch: int) -> None:
     log.info("cli.backfill.done", symbols=len(targets), start=str(start), end=str(end))
 
 
+async def _fundamentals(symbols: list[str] | None) -> None:
+    settings = get_settings()
+    provider = get_fundamentals_provider(settings)
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await ingest_fundamentals(session, provider, symbols=symbols)
+    log.info(
+        "cli.fundamentals.done",
+        requested=report.requested,
+        records=report.records_written,
+        failed=len(report.failed),
+    )
+
+
 def _parse_symbols(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -85,11 +100,16 @@ def main() -> None:
     bf.add_argument("--symbols", type=str, default=None, help="comma-separated; default all")
     bf.add_argument("--batch", type=int, default=100)
 
+    fund = sub.add_parser("fundamentals", help="Ingest annual fundamentals")
+    fund.add_argument("--symbols", type=str, default=None, help="comma-separated; default all")
+
     args = parser.parse_args()
     if args.command == "seed":
         asyncio.run(_seed())
     elif args.command == "backfill":
         asyncio.run(_backfill(args.years, _parse_symbols(args.symbols), args.batch))
+    elif args.command == "fundamentals":
+        asyncio.run(_fundamentals(_parse_symbols(args.symbols)))
 
 
 if __name__ == "__main__":

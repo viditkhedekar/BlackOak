@@ -7,7 +7,7 @@ factory is the one place that knows which implementation is wired in (ADR-0004).
 from __future__ import annotations
 
 from app.core.config import Settings
-from app.services.ports import MarketDataProvider
+from app.services.ports import FundamentalsProvider, MarketDataProvider
 
 
 def get_market_data_provider(settings: Settings) -> MarketDataProvider:
@@ -19,3 +19,10 @@ def get_market_data_provider(settings: Settings) -> MarketDataProvider:
     from app.adapters.yfinance_data import YFinanceMarketData
 
     return YFinanceMarketData()
+
+
+def get_fundamentals_provider(settings: Settings) -> FundamentalsProvider:
+    # yfinance is the only free fundamentals source today; FMP is the paid upgrade path.
+    from app.adapters.yfinance_fundamentals import YFinanceFundamentals
+
+    return YFinanceFundamentals()

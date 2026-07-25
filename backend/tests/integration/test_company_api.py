@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from datetime import date
 from decimal import Decimal
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
