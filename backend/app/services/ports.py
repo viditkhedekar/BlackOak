@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
+from app.domain.broker import BrokerAccount, BrokerOrder, BrokerPosition
 from app.domain.fundamentals import EstimateRecord, FundamentalRecord
 from app.domain.macro import MacroPoint
 from app.domain.market_data import Bar, IntradayBar
@@ -67,4 +68,28 @@ class FundamentalsProvider(Protocol):
 
     def fetch_estimates(self, symbol: str) -> EstimateRecord | None:
         """Return current forward estimates, or None if unavailable."""
+        ...
+
+
+@runtime_checkable
+class BrokerClient(Protocol):
+    """Paper broker. The DB owns order intent; the broker owns fills/positions (truth).
+    Implementations: Alpaca paper, FakeBroker (tests). All methods are synchronous and
+    called via asyncio.to_thread, matching the other adapters."""
+
+    name: str
+
+    def get_account(self) -> BrokerAccount: ...
+
+    def list_positions(self) -> list[BrokerPosition]: ...
+
+    def submit_order(
+        self, client_order_id: str, symbol: str, side: str, qty: float
+    ) -> BrokerOrder:
+        """Submit a market order. ``client_order_id`` is our UUID — resubmitting the same
+        id must return the existing order, never create a second (idempotency)."""
+        ...
+
+    def get_order(self, client_order_id: str) -> BrokerOrder | None:
+        """Look up an order by our client id, or None if the broker has no record."""
         ...

@@ -343,3 +343,109 @@ class BacktestEquity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     cash: Mapped[Decimal] = mapped_column(Money)
     regime: Mapped[str] = mapped_column(String(16))
     positions: Mapped[int] = mapped_column(Integer)
+
+
+class Position(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Local mirror of the broker's open positions (broker is source of truth, synced by
+    nightly reconciliation). One row per open symbol."""
+
+    __tablename__ = "positions"
+    __table_args__ = (UniqueConstraint("symbol", name="uq_positions_symbol"),)
+
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
+    )
+    symbol: Mapped[str] = mapped_column(String(16))
+    shares: Mapped[Decimal] = mapped_column(Money)
+    avg_entry_price: Mapped[Decimal] = mapped_column(Money)
+    last_synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PositionThesis(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """The entry snapshot a position's sell rules are measured against — what
+    'deterioration' and 'target' mean for this specific holding."""
+
+    __tablename__ = "position_theses"
+    __table_args__ = (UniqueConstraint("symbol", name="uq_thesis_symbol"),)
+
+    symbol: Mapped[str] = mapped_column(String(16))
+    entry_price: Mapped[Decimal] = mapped_column(Money)
+    atr_at_entry: Mapped[Decimal] = mapped_column(Money)
+    stop_price: Mapped[Decimal] = mapped_column(Money)
+    target_price: Mapped[Decimal] = mapped_column(Money)
+    entry_composite: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    entry_fundamentals_score: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    took_partial: Mapped[bool] = mapped_column(Boolean, default=False)
+    highest_close: Mapped[Decimal] = mapped_column(Money)
+    reversal_days: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Intent ledger (DB owns intent; broker owns fills). client_order_id is our UUID sent
+    to Alpaca so resubmits are idempotent."""
+
+    __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint("client_order_id", name="uq_orders_client_id"),
+        Index("ix_orders_status", "status"),
+    )
+
+    client_order_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
+    broker_order_id: Mapped[str | None] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(16))
+    side: Mapped[str] = mapped_column(String(4))  # buy | sell
+    qty: Mapped[Decimal] = mapped_column(Money)
+    status: Mapped[str] = mapped_column(String(20))  # see order lifecycle
+    reason: Mapped[str] = mapped_column(String(32))  # decision rule that spawned it
+    reject_reason: Mapped[str | None] = mapped_column(String(200))
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Execution(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "executions"
+    __table_args__ = (
+        UniqueConstraint("broker_execution_id", name="uq_exec_broker_id"),
+        Index("ix_executions_order", "order_id"),
+    )
+
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("orders.id", ondelete="CASCADE")
+    )
+    broker_execution_id: Mapped[str | None] = mapped_column(String(64))
+    symbol: Mapped[str] = mapped_column(String(16))
+    fill_qty: Mapped[Decimal] = mapped_column(Money)
+    fill_price: Mapped[Decimal] = mapped_column(Money)
+    filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TradeDecision(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """The audit spine: every cycle records buys, sells, holds, skips AND blocks with the
+    full evidence that produced them — written BEFORE any order is placed (ADR-0008)."""
+
+    __tablename__ = "trade_decisions"
+    __table_args__ = (
+        Index("ix_trade_decisions_cycle", "cycle_id"),
+        Index("ix_trade_decisions_ts_symbol", "ts", "symbol"),
+    )
+
+    cycle_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True))
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    symbol: Mapped[str] = mapped_column(String(16))
+    action: Mapped[str] = mapped_column(String(12))  # buy|sell|hold|skip|blocked
+    reason: Mapped[str] = mapped_column(String(48))
+    regime: Mapped[str] = mapped_column(String(16))
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class PortfolioSnapshot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """EOD (and intraday) portfolio state → performance math."""
+
+    __tablename__ = "portfolio_snapshots"
+    __table_args__ = (UniqueConstraint("ts", name="uq_portfolio_snapshot_ts"),)
+
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    equity: Mapped[Decimal] = mapped_column(Money)
+    cash: Mapped[Decimal] = mapped_column(Money)
+    positions: Mapped[int] = mapped_column(Integer)
+    regime: Mapped[str] = mapped_column(String(16))
+    holdings: Mapped[dict[str, Any]] = mapped_column(JSONB)

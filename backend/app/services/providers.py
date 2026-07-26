@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.core.config import Settings
 from app.services.ports import (
+    BrokerClient,
     FundamentalsProvider,
     IntradayBarsProvider,
     MacroDataProvider,
@@ -37,6 +38,12 @@ def get_macro_provider(settings: Settings) -> MacroDataProvider:
     from app.adapters.fred_macro import FredMacro
 
     return FredMacro()
+
+
+def get_broker(settings: Settings) -> BrokerClient:
+    from app.adapters.alpaca_broker import AlpacaPaperBroker
+
+    return AlpacaPaperBroker(settings.alpaca_api_key, settings.alpaca_secret_key)
 
 
 def get_fundamentals_provider(settings: Settings) -> FundamentalsProvider:
