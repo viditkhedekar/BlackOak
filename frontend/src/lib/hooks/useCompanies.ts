@@ -11,6 +11,42 @@ export function useScreener(params: ScreenerParams) {
   });
 }
 
+// Dashboard hooks — poll live surfaces every 15s.
+const LIVE = { refetchInterval: 15_000, placeholderData: keepPreviousData } as const;
+
+export function useRankings() {
+  return useQuery({ queryKey: ["rankings"], queryFn: () => api.rankings(), ...LIVE });
+}
+export function useRegime() {
+  return useQuery({ queryKey: ["regime"], queryFn: () => api.regime(), ...LIVE });
+}
+export function useDecisions(params?: { action?: string; symbol?: string }) {
+  return useQuery({
+    queryKey: ["decisions", params],
+    queryFn: () => api.decisions(params),
+    ...LIVE,
+  });
+}
+export function usePortfolio() {
+  return useQuery({ queryKey: ["portfolio"], queryFn: () => api.portfolio(), ...LIVE });
+}
+export function usePerformance() {
+  return useQuery({ queryKey: ["performance"], queryFn: () => api.performance(), ...LIVE });
+}
+export function useBacktests() {
+  return useQuery({ queryKey: ["backtests"], queryFn: () => api.backtests() });
+}
+export function useBacktest(id: string) {
+  return useQuery({
+    queryKey: ["backtest", id],
+    queryFn: () => api.backtest(id),
+    enabled: Boolean(id),
+  });
+}
+export function useSystemHealth() {
+  return useQuery({ queryKey: ["systemHealth"], queryFn: () => api.systemHealth(), ...LIVE });
+}
+
 export function useScores(symbol: string, profile: string) {
   return useQuery({
     queryKey: ["scores", symbol, profile],

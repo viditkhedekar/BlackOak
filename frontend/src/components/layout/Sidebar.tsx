@@ -4,13 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { label: "Dashboard", href: "/", ready: true },
+  { label: "Command Center", href: "/", ready: true },
+  { label: "Rankings", href: "/rankings", ready: true },
+  { label: "Decision Journal", href: "/journal", ready: true },
   { label: "Research", href: "/research", ready: true },
-  { label: "Portfolio", href: "/portfolio", ready: false },
-  { label: "Trades", href: "/trades", ready: false },
-  { label: "Performance", href: "/performance", ready: false },
-  { label: "Risk", href: "/risk", ready: false },
-  { label: "Settings", href: "/settings", ready: false },
+  { label: "Backtest Lab", href: "/backtests", ready: true },
+  { label: "System Health", href: "/system", ready: true },
 ];
 
 export function Sidebar() {

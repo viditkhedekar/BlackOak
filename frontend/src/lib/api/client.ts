@@ -17,6 +17,16 @@ export type ScreenerResponse = JSON200<"/api/v1/screener", "get">;
 export type ScreenerRow = ScreenerResponse["items"][number];
 export type CompanyScoreDetail = JSON200<"/api/v1/companies/{symbol}/scores", "get">;
 
+export type RankingsResponse = JSON200<"/api/v1/strategy/rankings", "get">;
+export type RankingRow = RankingsResponse["items"][number];
+export type RegimeResponse = JSON200<"/api/v1/strategy/regime", "get">;
+export type DecisionRow = JSON200<"/api/v1/strategy/decisions", "get">[number];
+export type PortfolioResponse = JSON200<"/api/v1/portfolio", "get">;
+export type PerformanceResponse = JSON200<"/api/v1/performance", "get">;
+export type BacktestSummary = JSON200<"/api/v1/backtests", "get">[number];
+export type BacktestDetail = JSON200<"/api/v1/backtests/{run_id}", "get">;
+export type SystemHealth = JSON200<"/api/v1/system/health", "get">;
+
 export const PROFILES = ["conservative", "balanced", "aggressive"] as const;
 export type Profile = (typeof PROFILES)[number];
 
@@ -60,4 +70,17 @@ export const api = {
   },
   scores: (symbol: string, profile: string) =>
     get<CompanyScoreDetail>(`/api/v1/companies/${symbol}/scores`, { profile }),
+  rankings: () => get<RankingsResponse>("/api/v1/strategy/rankings", { limit: "60" }),
+  regime: () => get<RegimeResponse>("/api/v1/strategy/regime"),
+  decisions: (params?: { action?: string; symbol?: string }) => {
+    const p: Record<string, string> = { limit: "150" };
+    if (params?.action) p.action = params.action;
+    if (params?.symbol) p.symbol = params.symbol;
+    return get<DecisionRow[]>("/api/v1/strategy/decisions", p);
+  },
+  portfolio: () => get<PortfolioResponse>("/api/v1/portfolio"),
+  performance: () => get<PerformanceResponse>("/api/v1/performance"),
+  backtests: () => get<BacktestSummary[]>("/api/v1/backtests"),
+  backtest: (id: string) => get<BacktestDetail>(`/api/v1/backtests/${id}`),
+  systemHealth: () => get<SystemHealth>("/api/v1/system/health"),
 };

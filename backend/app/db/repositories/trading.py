@@ -114,6 +114,18 @@ class TradeDecisionRepository:
         )
         return list(result.scalars().all())
 
+    async def recent(
+        self, limit: int = 100, action: str | None = None, symbol: str | None = None
+    ) -> list[TradeDecision]:
+        stmt = select(TradeDecision)
+        if action:
+            stmt = stmt.where(TradeDecision.action == action)
+        if symbol:
+            stmt = stmt.where(TradeDecision.symbol == symbol.upper())
+        stmt = stmt.order_by(TradeDecision.ts.desc()).limit(limit)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
 
 class PortfolioSnapshotRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -137,5 +149,17 @@ class PortfolioSnapshotRepository:
             .where(PortfolioSnapshot.ts < ts)
             .order_by(PortfolioSnapshot.ts.desc())
             .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def series(self, limit: int = 500) -> list[PortfolioSnapshot]:
+        result = await self._session.execute(
+            select(PortfolioSnapshot).order_by(PortfolioSnapshot.ts.desc()).limit(limit)
+        )
+        return list(reversed(result.scalars().all()))
+
+    async def latest(self) -> PortfolioSnapshot | None:
+        result = await self._session.execute(
+            select(PortfolioSnapshot).order_by(PortfolioSnapshot.ts.desc()).limit(1)
         )
         return result.scalar_one_or_none()

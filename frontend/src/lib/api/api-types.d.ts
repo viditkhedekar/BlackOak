@@ -106,6 +106,142 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/strategy/rankings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rankings */
+        get: operations["rankings_api_v1_strategy_rankings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/strategy/regime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Regime */
+        get: operations["regime_api_v1_strategy_regime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/strategy/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Decisions */
+        get: operations["decisions_api_v1_strategy_decisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/portfolio": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Portfolio */
+        get: operations["portfolio_api_v1_portfolio_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/performance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Performance */
+        get: operations["performance_api_v1_performance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Backtests */
+        get: operations["list_backtests_api_v1_backtests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/backtests/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Backtest Detail */
+        get: operations["backtest_detail_api_v1_backtests__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** System Health */
+        get: operations["system_health_api_v1_system_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -127,6 +263,74 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BacktestDetail */
+        BacktestDetail: {
+            summary: components["schemas"]["BacktestSummary"];
+            /** Equity Curve */
+            equity_curve: components["schemas"]["BacktestEquityPoint"][];
+            /** Trades */
+            trades: components["schemas"]["BacktestTradeRow"][];
+        };
+        /** BacktestEquityPoint */
+        BacktestEquityPoint: {
+            /**
+             * Day
+             * Format: date
+             */
+            day: string;
+            /** Equity */
+            equity: number;
+            /** Regime */
+            regime: string;
+        };
+        /** BacktestSummary */
+        BacktestSummary: {
+            /** Id */
+            id: string;
+            /**
+             * Start Date
+             * Format: date
+             */
+            start_date: string;
+            /**
+             * End Date
+             * Format: date
+             */
+            end_date: string;
+            /** Config Version */
+            config_version: string;
+            /** Universe Size */
+            universe_size: number;
+            /** Metrics */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /** BacktestTradeRow */
+        BacktestTradeRow: {
+            /** Symbol */
+            symbol: string;
+            /** Side */
+            side: string;
+            /**
+             * Trade Date
+             * Format: date
+             */
+            trade_date: string;
+            /** Shares */
+            shares: number;
+            /** Price */
+            price: number;
+            /** Reason */
+            reason: string;
+            /** Realized Pnl */
+            realized_pnl: number;
+        };
         /** CategoryBreakdown */
         CategoryBreakdown: {
             /** Category */
@@ -217,6 +421,44 @@ export interface components {
             /** Industry */
             industry: string | null;
         };
+        /** DecisionRow */
+        DecisionRow: {
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Cycle Id */
+            cycle_id: string;
+            /** Symbol */
+            symbol: string;
+            /** Action */
+            action: string;
+            /** Reason */
+            reason: string;
+            /** Regime */
+            regime: string;
+            /** Evidence */
+            evidence: {
+                [key: string]: unknown;
+            };
+        };
+        /** EquityPoint */
+        EquityPoint: {
+            /**
+             * Ts
+             * Format: date-time
+             */
+            ts: string;
+            /** Equity */
+            equity: number;
+            /** Cash */
+            cash: number;
+            /** Regime */
+            regime: string;
+            /** Positions */
+            positions: number;
+        };
         /** FactorBreakdownItem */
         FactorBreakdownItem: {
             /** Factor */
@@ -227,6 +469,13 @@ export interface components {
             score: number | null;
             /** Inverse */
             inverse: boolean;
+        };
+        /** FeedFreshness */
+        FeedFreshness: {
+            /** Feed */
+            feed: string;
+            /** As Of */
+            as_of: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -241,6 +490,65 @@ export interface components {
             db: string;
             /** Environment */
             environment: string;
+        };
+        /** JobRunRow */
+        JobRunRow: {
+            /** Job Name */
+            job_name: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at: string | null;
+            /** Status */
+            status: string;
+            /** Records Processed */
+            records_processed: number | null;
+            /** Error */
+            error: string | null;
+        };
+        /** PerformanceResponse */
+        PerformanceResponse: {
+            /** Points */
+            points: components["schemas"]["EquityPoint"][];
+            /** Spy */
+            spy: number[];
+            /** Start Equity */
+            start_equity: number | null;
+            /** Total Return */
+            total_return: number | null;
+            /** Spy Return */
+            spy_return: number | null;
+        };
+        /** PortfolioResponse */
+        PortfolioResponse: {
+            /** Ts */
+            ts: string | null;
+            /** Equity */
+            equity: number | null;
+            /** Cash */
+            cash: number | null;
+            /** Regime */
+            regime: string | null;
+            /** Positions */
+            positions: components["schemas"]["PositionRow"][];
+        };
+        /** PositionRow */
+        PositionRow: {
+            /** Symbol */
+            symbol: string;
+            /** Shares */
+            shares: number;
+            /** Avg Entry Price */
+            avg_entry_price: number;
+            /** Stop Price */
+            stop_price: number | null;
+            /** Target Price */
+            target_price: number | null;
+            /** Entry Composite */
+            entry_composite: number | null;
         };
         /** PricePoint */
         PricePoint: {
@@ -271,6 +579,50 @@ export interface components {
             /** Points */
             points: components["schemas"]["PricePoint"][];
         };
+        /** RankingRow */
+        RankingRow: {
+            /** Rank */
+            rank: number | null;
+            /** Symbol */
+            symbol: string;
+            /** Name */
+            name: string;
+            /** Sector */
+            sector: string | null;
+            /** Composite */
+            composite: number | null;
+            families: components["schemas"]["StrategyFamilies"];
+            /** Data Completeness */
+            data_completeness: number;
+        };
+        /** RankingsResponse */
+        RankingsResponse: {
+            /** Ts */
+            ts: string | null;
+            /** Regime */
+            regime: string | null;
+            /** Items */
+            items: components["schemas"]["RankingRow"][];
+        };
+        /** RegimeResponse */
+        RegimeResponse: {
+            /** Ts */
+            ts: string | null;
+            /** Label */
+            label: string | null;
+            /** Raw Label */
+            raw_label: string | null;
+            /** Bearish Count */
+            bearish_count: number | null;
+            /** Features */
+            features: {
+                [key: string]: unknown;
+            } | null;
+            /** Weights */
+            weights: {
+                [key: string]: unknown;
+            } | null;
+        };
         /** ScreenerResponse */
         ScreenerResponse: {
             /** Items */
@@ -299,6 +651,26 @@ export interface components {
             /** Data Completeness */
             data_completeness: number;
             categories: components["schemas"]["CategoryScores"];
+        };
+        /** StrategyFamilies */
+        StrategyFamilies: {
+            /** Valuation */
+            valuation?: number | null;
+            /** Fundamentals */
+            fundamentals?: number | null;
+            /** Momentum */
+            momentum?: number | null;
+            /** Technical */
+            technical?: number | null;
+            /** Risk */
+            risk?: number | null;
+        };
+        /** SystemHealthResponse */
+        SystemHealthResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["JobRunRow"][];
+            /** Feeds */
+            feeds: components["schemas"]["FeedFreshness"][];
         };
         /** ValidationError */
         ValidationError: {
@@ -508,6 +880,201 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rankings_api_v1_strategy_rankings_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RankingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regime_api_v1_strategy_regime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegimeResponse"];
+                };
+            };
+        };
+    };
+    decisions_api_v1_strategy_decisions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                action?: string | null;
+                symbol?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DecisionRow"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    portfolio_api_v1_portfolio_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortfolioResponse"];
+                };
+            };
+        };
+    };
+    performance_api_v1_performance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PerformanceResponse"];
+                };
+            };
+        };
+    };
+    list_backtests_api_v1_backtests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestSummary"][];
+                };
+            };
+        };
+    };
+    backtest_detail_api_v1_backtests__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BacktestDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    system_health_api_v1_system_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemHealthResponse"];
                 };
             };
         };
