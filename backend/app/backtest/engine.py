@@ -10,7 +10,6 @@ that keeps a multi-year run tractable; the decision logic is identical.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -19,21 +18,16 @@ import structlog
 from app.backtest.cost_model import fill_price
 from app.backtest.data_window import BacktestData, DataWindow
 from app.backtest.portfolio import SimPortfolio, Trade
+from app.domain.decision import SymbolCycleData, plan_cycle
 from app.domain.regime import (
     build_features,
     classify_raw,
     confirmed_regime,
 )
-from app.domain.rules import (
-    BuyContext,
-    PositionState,
-    evaluate_buy,
-    evaluate_sell,
-)
+from app.domain.rules import PositionState
 from app.domain.signals import compute_signals
-from app.domain.sizing import size_position
 from app.domain.stats import sma
-from app.domain.strategy import TOP_DECILE, StrategyCompany, fuse_scores
+from app.domain.strategy import StrategyCompany, fuse_scores
 
 log = structlog.get_logger()
 
@@ -113,17 +107,34 @@ def run_backtest(data: BacktestData, config: BacktestConfig) -> BacktestResult:
 
         scores = {s.symbol: s for s in fuse_scores(companies, regime)}
 
-        # Marks for equity / sector weights: this session's raw close.
+        # Build the per-symbol cycle snapshot the pure planner consumes.
+        cycle_data: dict[str, SymbolCycleData] = {}
         marks: dict[str, float] = {}
-        for sym in list(portfolio.positions) + [c.symbol for c in companies]:
+        for sym in {*signals_by_symbol, *portfolio.positions}:
             bar = window.bar(sym)
-            if bar is not None:
-                marks[sym] = bar.close
+            score = scores.get(sym)
+            if bar is None or score is None:
+                continue
+            marks[sym] = bar.close
+            symsig = signals_by_symbol.get(sym)
+            inputs = window.signal_inputs(sym)
+            if symsig is None or inputs is None:
+                continue
+            atr_pct = symsig["technical"].get("atr_pct")
+            cycle_data[sym] = SymbolCycleData(
+                symbol=sym, sector=inputs.sector,
+                bar_open=bar.open, bar_high=bar.high, bar_low=bar.low, bar_close=bar.close,
+                closes=inputs.closes, signals=symsig, score=score,
+                atr=(atr_pct * bar.close) if atr_pct and atr_pct > 0 else None,
+            )
 
-        _evaluate_exits(window, portfolio, scores, signals_by_symbol, as_of)
-        _evaluate_entries(
-            window, portfolio, scores, signals_by_symbol, marks, data.sectors, as_of, len(companies)
+        equity = portfolio.equity(marks)
+        sector_notional = _sector_notional(portfolio, data.sectors, marks)
+        plan = plan_cycle(
+            cycle_data, portfolio.positions, equity, portfolio.cash,
+            sector_notional, entries_today=0, n_scored=len(companies),
         )
+        _execute_plan(plan, portfolio, cycle_data, as_of)
 
         equity = portfolio.equity(marks)
         result.equity_curve.append(
@@ -134,106 +145,41 @@ def run_backtest(data: BacktestData, config: BacktestConfig) -> BacktestResult:
     return result
 
 
-def _tech_flags(sig: dict[str, dict[str, float | None]], closes: list[float]) -> dict[str, object]:
-    ma50 = sma(closes, 50)
-    price = closes[-1]
-    macd_hist = sig["technical"].get("macd_hist")
-    breakout = sig["momentum"].get("breakout_strength")
-    return {
-        "price_above_50dma": ma50 is not None and price > ma50,
-        "price_below_50dma": ma50 is not None and price < ma50,
-        "macd_bullish": macd_hist is not None and macd_hist > 0,
-        "macd_bearish": macd_hist is not None and macd_hist < 0,
-        "fresh_breakout": breakout is not None and breakout > 0,
-    }
+def _sector_notional(
+    portfolio: SimPortfolio, sectors: dict[str, str], marks: dict[str, float]
+) -> dict[str, float]:
+    out: dict[str, float] = {}
+    for sym, pos in portfolio.positions.items():
+        sector = sectors.get(sym, "Unknown")
+        out[sector] = out.get(sector, 0.0) + pos.shares * marks.get(sym, pos.entry_price)
+    return out
 
 
-def _evaluate_exits(window, portfolio, scores, signals_by_symbol, as_of) -> None:  # type: ignore[no-untyped-def]
-    for sym in list(portfolio.positions):
-        pos = portfolio.positions[sym]
-        bar = window.bar(sym)
-        if bar is None:
-            continue
-        sig = signals_by_symbol.get(sym)
-        score = scores.get(sym)
-        inputs = window.signal_inputs(sym)
-        flags = _tech_flags(sig, inputs.closes) if sig and inputs else {}
-        action = evaluate_sell(
-            pos,
-            bar_open=bar.open, bar_high=bar.high, bar_low=bar.low, bar_close=bar.close,
-            composite=score.composite if score else None,
-            fundamentals_score=score.families.get("fundamentals") if score else None,
-            momentum_score=score.families.get("momentum") if score else None,
-            interest_coverage=(sig or {}).get("fundamentals", {}).get("interest_coverage"),
-            price_below_50dma=bool(flags.get("price_below_50dma")),
-            macd_bearish=bool(flags.get("macd_bearish")),
-        )
+def _execute_plan(plan, portfolio, cycle_data, as_of) -> None:  # type: ignore[no-untyped-def]
+    # Exits first (frees cash), then entries — the plan is already in that order.
+    for intent in plan.exits:
+        d = cycle_data[intent.symbol]
+        action = intent.action
         if action.fraction > 0:
-            vr = (sig or {}).get("technical", {}).get("volume_spike") if sig else None
+            vr = d.signals.get("technical", {}).get("volume_spike")
             price = fill_price(action.exit_price, "sell", vr)
-            portfolio.sell(sym, as_of, action.fraction, price, action.reason)
-        # Persist updated trail state on holds/partials.
-        if sym in portfolio.positions:
-            held = portfolio.positions[sym]
+            portfolio.sell(intent.symbol, as_of, action.fraction, price, action.reason)
+        if intent.symbol in portfolio.positions:
+            held = portfolio.positions[intent.symbol]
             held.stop_price = action.new_stop
             held.highest_close = action.new_highest_close
             held.reversal_days = action.reversal_days
 
-
-def _evaluate_entries(  # type: ignore[no-untyped-def]
-    window, portfolio, scores, signals_by_symbol, marks, sectors, as_of, n_scored
-) -> None:
-    rank_threshold = max(1, math.ceil(TOP_DECILE * n_scored))
-    entries_today = 0
-    candidates = sorted(
-        (s for s in scores.values() if s.composite is not None and s.rank is not None),
-        key=lambda s: s.rank or 10**9,
-    )
-    for score in candidates:
-        sym = score.symbol
-        if sym in portfolio.positions:
-            continue
-        sig = signals_by_symbol.get(sym)
-        inputs = window.signal_inputs(sym)
-        bar = window.bar(sym)
-        if sig is None or inputs is None or bar is None:
-            continue
-        flags = _tech_flags(sig, inputs.closes)
-        equity = portfolio.equity(marks)
-        ctx = BuyContext(
-            composite=score.composite,
-            rank=score.rank,
-            rank_threshold=rank_threshold,
-            data_completeness=score.data_completeness,
-            price_above_50dma=bool(flags["price_above_50dma"]),
-            fresh_breakout=bool(flags["fresh_breakout"]),
-            macd_bullish=bool(flags["macd_bullish"]),
-            days_to_earnings=None,
-            positions_held=len(portfolio.positions),
-            sector_weight=portfolio.sector_weight(
-                sectors.get(sym, "Unknown"), sectors, marks
-            ),
-            entries_today=entries_today,
-            cash_available=portfolio.cash,
-            already_held=False,
-        )
-        ok, _reason = evaluate_buy(ctx)
-        if not ok:
-            continue
-        atr_pct = sig["technical"].get("atr_pct")
-        if atr_pct is None or atr_pct <= 0:
-            continue
-        atr = atr_pct * bar.close
-        size = size_position(equity, bar.close, atr, portfolio.cash)
-        if size is None:
-            continue
-        price = fill_price(bar.close, "buy", sig["technical"].get("volume_spike"))
+    for entry in plan.entries:
+        d = cycle_data[entry.symbol]
+        vr = d.signals.get("technical", {}).get("volume_spike")
+        price = fill_price(entry.ref_price, "buy", vr)
         state = PositionState(
-            symbol=sym, entry_price=price, shares=size.shares, atr_at_entry=atr,
-            stop_price=size.stop_price, target_price=size.target_price,
-            entry_composite=score.composite,
-            entry_fundamentals_score=score.families.get("fundamentals"),
-            highest_close=bar.close,
+            symbol=entry.symbol, entry_price=price, shares=entry.shares, atr_at_entry=entry.atr,
+            stop_price=entry.stop_price, target_price=entry.target_price,
+            entry_composite=entry.entry_composite,
+            entry_fundamentals_score=entry.entry_fundamentals_score,
+            highest_close=entry.ref_price,
         )
-        portfolio.buy(sym, as_of, size.shares, price, state)
-        entries_today += 1
+        portfolio.buy(entry.symbol, as_of, entry.shares, price, state)
+
