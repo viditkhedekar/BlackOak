@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.domain.rules import (
+    GATE_KIND_BY_REASON,
     BuyContext,
     PositionState,
     SellAction,
@@ -59,10 +61,22 @@ class EntryIntent:
 
 
 @dataclass(frozen=True, slots=True)
+class SkipRecord:
+    """Why one candidate was passed over, with the numbers behind the call."""
+
+    symbol: str
+    reason: str
+    gate_kind: str  # score_threshold | hard_rule | portfolio_limit
+    rank: int | None
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class CyclePlan:
     exits: list[ExitIntent] = field(default_factory=list)
     entries: list[EntryIntent] = field(default_factory=list)
-    skips: list[tuple[str, str]] = field(default_factory=list)  # (symbol, reason)
+    skips: list[SkipRecord] = field(default_factory=list)
+    rank_threshold: int = 0  # top-decile cutoff this cycle; journal uses it for triage
 
 
 def _flags(data: SymbolCycleData) -> dict[str, bool]:
@@ -95,7 +109,7 @@ def plan_exits(
         action = evaluate_sell(
             pos,
             bar_open=d.bar_open, bar_high=d.bar_high, bar_low=d.bar_low, bar_close=d.bar_close,
-            composite=score.composite,
+            composite_percentile=score.composite_percentile,
             fundamentals_score=score.families.get("fundamentals"),
             momentum_score=score.families.get("momentum"),
             interest_coverage=d.signals.get("fundamentals", {}).get("interest_coverage"),
@@ -114,16 +128,16 @@ def plan_entries(
     sector_notional: dict[str, float],
     entries_today: int,
     n_scored: int,
-) -> tuple[list[EntryIntent], list[tuple[str, str]]]:
+) -> tuple[list[EntryIntent], list[SkipRecord], int]:
     """Plan new entries in composite-rank order, funding the strongest first. Returns
-    (entries, skips) where skips carry the gate reason for the decision journal."""
+    (entries, skips, rank_threshold) where skips carry the gate reason and its evidence
+    for the decision journal."""
     rank_threshold = max(1, math.ceil(TOP_DECILE * n_scored))
-    candidates = sorted(
-        (d for d in data.values() if d.score.composite is not None and d.score.rank is not None),
-        key=lambda d: d.score.rank or 10**9,
-    )
+    # Unranked names are kept as candidates (sorted last) so they are journaled as
+    # insufficient_data rather than vanishing from the audit trail.
+    candidates = sorted(data.values(), key=lambda d: d.score.rank or 10**9)
     entries: list[EntryIntent] = []
-    skips: list[tuple[str, str]] = []
+    skips: list[SkipRecord] = []
     running_cash = cash
     running_sector = dict(sector_notional)
     planned = 0
@@ -136,6 +150,7 @@ def plan_entries(
         sector_weight = (running_sector.get(d.sector, 0.0) / equity) if equity > 0 else 0.0
         ctx = BuyContext(
             composite=d.score.composite,
+            composite_percentile=d.score.composite_percentile,
             rank=d.score.rank,
             rank_threshold=rank_threshold,
             data_completeness=d.score.data_completeness,
@@ -149,16 +164,24 @@ def plan_entries(
             cash_available=running_cash,
             already_held=False,
         )
-        ok, reason = evaluate_buy(ctx)
-        if not ok:
-            skips.append((sym, reason))
+        verdict = evaluate_buy(ctx)
+        if not verdict.passed:
+            skips.append(
+                SkipRecord(sym, verdict.reason, verdict.gate_kind, d.score.rank, verdict.detail)
+            )
             continue
         if d.atr is None or d.atr <= 0:
-            skips.append((sym, "no_atr"))
+            skips.append(
+                SkipRecord(sym, "no_atr", GATE_KIND_BY_REASON["no_atr"], d.score.rank,
+                           {**verdict.detail, "atr": d.atr})
+            )
             continue
         size = size_position(equity, d.bar_close, d.atr, running_cash)
         if size is None:
-            skips.append((sym, "size_too_small"))
+            skips.append(
+                SkipRecord(sym, "size_too_small", GATE_KIND_BY_REASON["size_too_small"],
+                           d.score.rank, {**verdict.detail, "cash_available": running_cash})
+            )
             continue
         entries.append(
             EntryIntent(
@@ -173,7 +196,7 @@ def plan_entries(
         running_sector[d.sector] = running_sector.get(d.sector, 0.0) + size.notional
         planned += 1
 
-    return entries, skips
+    return entries, skips, rank_threshold
 
 
 def plan_cycle(
@@ -186,7 +209,9 @@ def plan_cycle(
     n_scored: int,
 ) -> CyclePlan:
     exits = plan_exits(positions, data)
-    entries, skips = plan_entries(
+    entries, skips, rank_threshold = plan_entries(
         data, equity, cash, set(positions), sector_notional, entries_today, n_scored
     )
-    return CyclePlan(exits=exits, entries=entries, skips=skips)
+    return CyclePlan(
+        exits=exits, entries=entries, skips=skips, rank_threshold=rank_threshold
+    )

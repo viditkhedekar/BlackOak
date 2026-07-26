@@ -11,8 +11,8 @@ from app.db.models import Company, RegimeSnapshot, StrategyScore
 
 _FAMILY_COLUMNS = ("valuation", "fundamentals", "momentum", "technical", "risk")
 _UPSERT_COLUMNS = (
-    *_FAMILY_COLUMNS, "composite", "rank", "regime", "data_completeness",
-    "engine_version", "weights_used", "inputs",
+    *_FAMILY_COLUMNS, "composite", "composite_percentile", "rank", "regime",
+    "data_completeness", "engine_version", "weights_used", "inputs",
 )
 
 

@@ -185,6 +185,7 @@ async def run_signal_pipeline(session: AsyncSession) -> PipelineReport:
                     "technical": s.families["technical"],
                     "risk": s.families["risk"],
                     "composite": s.composite,
+                    "composite_percentile": s.composite_percentile,
                     "rank": s.rank,
                     "data_completeness": s.data_completeness,
                     "engine_version": ENGINE_VERSION,

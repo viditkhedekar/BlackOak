@@ -280,6 +280,9 @@ class StrategyScore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     technical: Mapped[float | None] = mapped_column(Numeric(6, 3))
     risk: Mapped[float | None] = mapped_column(Numeric(6, 3))
     composite: Mapped[float | None] = mapped_column(Numeric(6, 3))
+    # The composite ranked across the universe. This, not `composite`, is the unit the
+    # entry/exit gates compare against — see app/domain/strategy.py.
+    composite_percentile: Mapped[float | None] = mapped_column(Numeric(6, 3))
     rank: Mapped[int | None] = mapped_column(Integer)
 
     data_completeness: Mapped[float] = mapped_column(Numeric(5, 4), default=0)

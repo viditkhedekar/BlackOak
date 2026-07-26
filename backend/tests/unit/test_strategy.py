@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+from itertools import pairwise
+
 from app.domain.regime import (
     NEUTRAL,
     RISK_OFF,
@@ -13,10 +16,31 @@ from app.domain.regime import (
 )
 from app.domain.signals.inputs import SIGNAL_FAMILIES
 from app.domain.strategy import (
+    MIN_COMPOSITE_PERCENTILE,
+    MIN_DATA_COMPLETENESS,
     WEIGHTS_BY_REGIME,
     StrategyCompany,
     fuse_scores,
+    score_attribution,
+    weakest_metrics,
 )
+
+_SECTORS = ["Tech", "Health", "Financials", "Energy", "Staples"]
+
+
+def _universe(n: int = 500, seed: int = 7) -> list[StrategyCompany]:
+    """A realistically correlated cross-section: each name has a latent quality that all
+    its metrics load on, plus idiosyncratic noise."""
+    rng = random.Random(seed)
+    companies = []
+    for i in range(n):
+        latent = rng.gauss(0.0, 1.0)
+        signals = {
+            family: {m: latent * 0.6 + rng.gauss(0.0, 0.8) for m in metrics}
+            for family, metrics in SIGNAL_FAMILIES.items()
+        }
+        companies.append(StrategyCompany(f"S{i}", _SECTORS[i % len(_SECTORS)], signals))
+    return companies
 
 
 def _company(symbol: str, sector: str, bump: float) -> StrategyCompany:
@@ -88,6 +112,181 @@ def test_regime_reweighting_changes_composite() -> None:
     # Risk-on over-weights momentum; risk-off over-weights fundamentals.
     assert on["MOM"] > off["MOM"]
     assert off["FUN"] > on["FUN"]
+
+
+# --- calibration: the gate's unit must match the gate's threshold ----------
+
+def test_raw_composite_clusters_near_neutral() -> None:
+    """The composite is a MEAN of percentiles, so averaging collapses its spread.
+
+    This pins the property that made an absolute threshold of 70 unreachable: with 30
+    metrics the composite concentrates near 50 and never approaches the extremes. Any
+    future gate compared against the raw composite has to respect this scale."""
+    scores = fuse_scores(_universe(), "neutral")
+    composites = [s.composite for s in scores if s.composite is not None]
+    assert len(composites) == 500
+    assert max(composites) < 70.0  # the old MIN_COMPOSITE, mathematically out of reach
+    assert 45.0 < sum(composites) / len(composites) < 55.0
+
+
+def test_composite_percentile_spans_the_full_range() -> None:
+    scores = fuse_scores(_universe(), "neutral")
+    pcts = [s.composite_percentile for s in scores if s.composite_percentile is not None]
+    assert len(pcts) == 500
+    assert min(pcts) < 5.0 and max(pcts) > 95.0
+
+
+def test_min_composite_percentile_admits_a_slice_in_every_regime() -> None:
+    """The regression lock for the calibration bug.
+
+    The entry gate must admit a workable candidate pool in every regime. Before the fix
+    zero names cleared it in all three, so the journal collapsed onto one reason code."""
+    for regime in WEIGHTS_BY_REGIME:
+        scores = fuse_scores(_universe(), regime)
+        passing = [
+            s for s in scores
+            if s.composite_percentile is not None
+            and s.composite_percentile >= MIN_COMPOSITE_PERCENTILE
+        ]
+        # ~30% of the universe by construction; allow slack for the normal-CDF mapping.
+        assert 100 <= len(passing) <= 200, f"{regime}: {len(passing)} passed"
+
+
+def test_composite_percentile_agrees_with_rank_ordering() -> None:
+    """The percentile is a monotone transform of the composite, so it cannot contradict
+    the rank the engine sorts on."""
+    scores = [s for s in fuse_scores(_universe(n=120), "risk_on") if s.rank is not None]
+    by_rank = sorted(scores, key=lambda s: s.rank or 0)
+    pcts = [s.composite_percentile for s in by_rank]
+    # Non-strict: winsorizing at 1/99 clamps the tails, so the extremes tie rather than
+    # strictly decreasing.
+    assert all(
+        a is not None and b is not None and a >= b for a, b in pairwise(pcts)
+    )
+
+
+# --- completeness measures applicable metrics ------------------------------
+
+def _with_missing(missing: dict[str, list[str]], sectors: set[str] | None = None,
+                  n: int = 40) -> list[StrategyCompany]:
+    """Universe where `missing` metrics are None — for every name, or only in `sectors`."""
+    rng = random.Random(3)
+    companies = []
+    for i in range(n):
+        sector = _SECTORS[i % len(_SECTORS)]
+        signals: dict[str, dict[str, float | None]] = {
+            family: {m: rng.gauss(0.0, 1.0) for m in metrics}
+            for family, metrics in SIGNAL_FAMILIES.items()
+        }
+        if sectors is None or sector in sectors:
+            for family, metrics in missing.items():
+                for m in metrics:
+                    signals[family][m] = None
+        companies.append(StrategyCompany(f"S{i}", sector, signals))
+    return companies
+
+
+def test_universally_absent_metric_leaves_the_denominator() -> None:
+    """corr_to_holdings and days_to_earnings are never populated, so charging every name
+    for them capped completeness below the 0.80 floor no matter how good the data was."""
+    full = fuse_scores(_with_missing({}), "neutral")
+    assert all(s.metrics_applicable == 30 for s in full)
+    assert all(s.data_completeness == 1.0 for s in full)
+
+    starved = fuse_scores(
+        _with_missing({"risk": ["corr_to_holdings", "days_to_earnings"]}), "neutral"
+    )
+    assert all(s.metrics_applicable == 28 for s in starved)
+    assert all(s.data_completeness == 1.0 for s in starved)
+
+
+def test_sector_inapplicable_metric_only_excused_for_that_sector() -> None:
+    """Banks have no EBITDA or gross margin. That is inapplicable, not missing — and it
+    must not excuse the same gap in a sector whose peers do report it."""
+    scores = {
+        s.symbol: s
+        for s in fuse_scores(
+            _with_missing(
+                {"valuation": ["ev_ebitda"], "fundamentals": ["gross_margin"]},
+                sectors={"Financials"},
+            ),
+            "neutral",
+        )
+    }
+    banks = [s for sym, s in scores.items() if int(sym[1:]) % len(_SECTORS) == 2]
+    others = [s for sym, s in scores.items() if int(sym[1:]) % len(_SECTORS) != 2]
+
+    assert banks and others
+    # Both families are sector-relative, so the two metrics leave only the bank cohort.
+    assert all(s.metrics_applicable == 28 for s in banks)
+    assert all(s.metrics_applicable == 30 for s in others)
+    # And nobody is penalised: every name has all of what its own peers have.
+    assert all(s.data_completeness == 1.0 for s in scores.values())
+    assert all(s.data_completeness >= MIN_DATA_COMPLETENESS for s in banks)
+
+
+def test_family_survives_when_half_its_applicable_metrics_are_present() -> None:
+    """The >=50% family rule counts applicable metrics, not the catalogue.
+
+    Against the catalogue a Financials cohort missing 4 of 9 fundamentals could never
+    reach 5-of-9, so the family would be dropped for every bank in the universe."""
+    inapplicable = ["ev_ebitda", "forward_pe", "peg"]  # 3 of 5 valuation metrics
+    scores = fuse_scores(
+        _with_missing({"valuation": inapplicable}, sectors={"Financials"}), "neutral"
+    )
+    banks = [s for s in scores if int(s.symbol[1:]) % len(_SECTORS) == 2]
+    assert banks
+    # 2 applicable, 2 present → survives. Against the catalogue it would be 2 of 5 → None.
+    assert all(s.families["valuation"] is not None for s in banks)
+
+
+def test_completeness_is_zero_when_nothing_is_reported() -> None:
+    empty = [
+        StrategyCompany(
+            f"S{i}", "Tech",
+            {f: {m: None for m in ms} for f, ms in SIGNAL_FAMILIES.items()},
+        )
+        for i in range(5)
+    ]
+    scores = fuse_scores(empty, "neutral")
+    assert all(s.data_completeness == 0.0 for s in scores)
+    assert all(s.composite is None and s.composite_percentile is None for s in scores)
+    assert all(s.rank is None for s in scores)
+
+
+# --- attribution: which signals pulled it down -----------------------------
+
+def test_attribution_orders_worst_family_first_and_sums_to_deviation() -> None:
+    weak_momentum = StrategyCompany(
+        "WEAK", "Tech",
+        {f: {m: (0.0 if f == "momentum" else 9.0) for m in ms}
+         for f, ms in SIGNAL_FAMILIES.items()},
+    )
+    peers = [_company(f"P{i}", "Tech", float(i)) for i in range(1, 10)]
+    scores = {s.symbol: s for s in fuse_scores([weak_momentum, *peers], "risk_on")}
+
+    contributions = score_attribution(scores["WEAK"], WEIGHTS_BY_REGIME["risk_on"])
+    assert contributions[0].family == "momentum"
+    assert contributions[0].contribution < 0
+    # Contributions decompose the composite's distance from neutral.
+    total = sum(c.contribution for c in contributions)
+    assert abs(total - ((scores["WEAK"].composite or 0.0) - 50.0)) < 0.05
+
+
+def test_weakest_metrics_reports_only_below_neutral_worst_first() -> None:
+    weak_momentum = StrategyCompany(
+        "WEAK", "Tech",
+        {f: {m: (0.0 if f == "momentum" else 9.0) for m in ms}
+         for f, ms in SIGNAL_FAMILIES.items()},
+    )
+    peers = [_company(f"P{i}", "Tech", float(i)) for i in range(1, 10)]
+    scores = {s.symbol: s for s in fuse_scores([weak_momentum, *peers], "risk_on")}
+
+    worst = weakest_metrics(scores["WEAK"], limit=5)
+    assert worst, "a name this weak must report detractors"
+    assert all(score < 50.0 for _, score in worst)
+    assert [s for _, s in worst] == sorted(s for _, s in worst)
+    assert all(m in SIGNAL_FAMILIES["momentum"] for m, _ in worst)
 
 
 # --- regime ---------------------------------------------------------------

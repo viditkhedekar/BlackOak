@@ -43,7 +43,9 @@ async def rankings(
         items.append(
             RankingRow(
                 rank=s.rank, symbol=company.symbol, name=company.name, sector=company.sector,
-                composite=_num(s.composite), data_completeness=float(s.data_completeness),
+                composite=_num(s.composite),
+                composite_percentile=_num(s.composite_percentile),
+                data_completeness=float(s.data_completeness),
                 families=StrategyFamilies(
                     valuation=_num(s.valuation), fundamentals=_num(s.fundamentals),
                     momentum=_num(s.momentum), technical=_num(s.technical), risk=_num(s.risk),

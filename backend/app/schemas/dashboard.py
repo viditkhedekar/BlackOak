@@ -20,6 +20,7 @@ class RankingRow(BaseModel):
     name: str
     sector: str | None
     composite: float | None
+    composite_percentile: float | None = None
     families: StrategyFamilies
     data_completeness: float
 

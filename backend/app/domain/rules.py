@@ -7,10 +7,15 @@ a machine-readable reason for the decision journal. No I/O, no clock, no DB.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.domain.sizing import STOP_ATR_MULT, TRAIL_ATR_MULT
-from app.domain.strategy import MIN_COMPOSITE, MIN_DATA_COMPLETENESS
+from app.domain.strategy import (
+    MIN_COMPOSITE_PERCENTILE,
+    MIN_DATA_COMPLETENESS,
+    MIN_WEIGHT_COVERAGE,
+)
 
 # Portfolio limits.
 MAX_POSITIONS = 20
@@ -18,20 +23,46 @@ MAX_ENTRIES_PER_DAY = 3
 MAX_SECTOR_PCT = 0.25
 EARNINGS_BLACKOUT_DAYS = 5
 
-# Sell thresholds.
+# Sell thresholds. COMPOSITE_EXIT is on the composite *percentile* scale (bottom quartile
+# of the cross-section), matching the entry gate. It previously read 40 on the raw
+# composite scale, which is a -1.7 sigma event and so effectively never fired.
 FUND_SCORE_DROP = 20.0
-COMPOSITE_EXIT = 40.0
+COMPOSITE_EXIT = 25.0
 MIN_INTEREST_COVERAGE = 2.0
 MOMENTUM_WEAK = 30.0
 TREND_CONFIRM_DAYS = 2
 
+# Why a name was rejected — the journal separates "the score wasn't good enough" from
+# "a rule vetoed it" from "the book had no room", because those need different responses.
+GATE_SCORE = "score_threshold"
+GATE_HARD = "hard_rule"
+GATE_PORTFOLIO = "portfolio_limit"
+
+GATE_KIND_BY_REASON: dict[str, str] = {
+    "composite_below_min": GATE_SCORE,
+    "not_top_decile": GATE_SCORE,
+    "insufficient_data": GATE_HARD,
+    "below_50dma": GATE_HARD,
+    "no_technical_trigger": GATE_HARD,
+    "earnings_proximity": GATE_HARD,
+    "no_atr": GATE_HARD,
+    "already_held": GATE_PORTFOLIO,
+    "max_positions": GATE_PORTFOLIO,
+    "sector_cap": GATE_PORTFOLIO,
+    "daily_entry_cap": GATE_PORTFOLIO,
+    "insufficient_cash": GATE_PORTFOLIO,
+    "size_too_small": GATE_PORTFOLIO,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class BuyContext:
-    composite: float | None
+    composite: float | None  # raw weighted mean of family percentiles (journal only)
+    composite_percentile: float | None  # the gated unit — see domain/strategy.py
     rank: int | None
     rank_threshold: int  # top-decile cutoff (inclusive)
     data_completeness: float
+    weight_covered: float  # regime weight of the families that actually scored
     price_above_50dma: bool
     fresh_breakout: bool  # breakout_strength > 0
     macd_bullish: bool  # macd_hist > 0
@@ -43,31 +74,72 @@ class BuyContext:
     already_held: bool
 
 
-def evaluate_buy(ctx: BuyContext) -> tuple[bool, str]:
-    """All gates must pass. Returns (should_buy, reason) — reason is logged either way."""
+@dataclass(frozen=True, slots=True)
+class BuyEvaluation:
+    """The verdict plus everything the decision journal needs to explain it."""
+
+    passed: bool
+    reason: str
+    gate_kind: str
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+def evaluate_buy(ctx: BuyContext) -> BuyEvaluation:
+    """All gates must pass. The reason is journaled either way."""
+    detail: dict[str, Any] = {
+        "composite": ctx.composite,
+        "composite_percentile": ctx.composite_percentile,
+        "min_composite_percentile": MIN_COMPOSITE_PERCENTILE,
+        "rank": ctx.rank,
+        "rank_threshold": ctx.rank_threshold,
+        "data_completeness": round(ctx.data_completeness, 4),
+        "min_data_completeness": MIN_DATA_COMPLETENESS,
+        "weight_covered": round(ctx.weight_covered, 4),
+        "min_weight_coverage": MIN_WEIGHT_COVERAGE,
+    }
+
+    def reject(reason: str, **extra: Any) -> BuyEvaluation:
+        return BuyEvaluation(
+            passed=False,
+            reason=reason,
+            gate_kind=GATE_KIND_BY_REASON[reason],
+            detail={**detail, **extra},
+        )
+
     if ctx.already_held:
-        return False, "already_held"
-    if ctx.composite is None or ctx.composite < MIN_COMPOSITE:
-        return False, "composite_below_min"
-    if ctx.rank is None or ctx.rank > ctx.rank_threshold:
-        return False, "not_top_decile"
+        return reject("already_held")
+    # A name the engine could not score at all is missing data, not weakly scored — say
+    # so rather than blaming the composite threshold it never reached.
+    if ctx.composite is None or ctx.composite_percentile is None:
+        return reject("insufficient_data", missing="unscored")
+    # Too much of the strategy's weight went unevaluated — e.g. a bank with no valuation
+    # or fundamentals input at all, scored on price action alone.
+    if ctx.weight_covered < MIN_WEIGHT_COVERAGE:
+        return reject("insufficient_data", missing="families")
     if ctx.data_completeness < MIN_DATA_COMPLETENESS:
-        return False, "insufficient_data"
+        return reject("insufficient_data", missing="metrics")
+    if ctx.composite_percentile < MIN_COMPOSITE_PERCENTILE:
+        return reject(
+            "composite_below_min",
+            shortfall=round(MIN_COMPOSITE_PERCENTILE - ctx.composite_percentile, 3),
+        )
+    if ctx.rank is None or ctx.rank > ctx.rank_threshold:
+        return reject("not_top_decile")
     if not ctx.price_above_50dma:
-        return False, "below_50dma"
+        return reject("below_50dma")
     if not (ctx.fresh_breakout or ctx.macd_bullish):
-        return False, "no_technical_trigger"
+        return reject("no_technical_trigger")
     if ctx.days_to_earnings is not None and ctx.days_to_earnings <= EARNINGS_BLACKOUT_DAYS:
-        return False, "earnings_proximity"
+        return reject("earnings_proximity", days_to_earnings=ctx.days_to_earnings)
     if ctx.positions_held >= MAX_POSITIONS:
-        return False, "max_positions"
+        return reject("max_positions", positions_held=ctx.positions_held)
     if ctx.sector_weight >= MAX_SECTOR_PCT:
-        return False, "sector_cap"
+        return reject("sector_cap", sector_weight=round(ctx.sector_weight, 4))
     if ctx.entries_today >= MAX_ENTRIES_PER_DAY:
-        return False, "daily_entry_cap"
+        return reject("daily_entry_cap", entries_today=ctx.entries_today)
     if ctx.cash_available <= 0:
-        return False, "insufficient_cash"
-    return True, "buy"
+        return reject("insufficient_cash", cash_available=ctx.cash_available)
+    return BuyEvaluation(passed=True, reason="buy", gate_kind="", detail=detail)
 
 
 @dataclass(slots=True)
@@ -112,7 +184,7 @@ def evaluate_sell(
     bar_high: float,
     bar_low: float,
     bar_close: float,
-    composite: float | None,
+    composite_percentile: float | None,
     fundamentals_score: float | None,
     momentum_score: float | None,
     interest_coverage: float | None,
@@ -141,7 +213,7 @@ def evaluate_sell(
         and fundamentals_score is not None
         and pos.entry_fundamentals_score - fundamentals_score > FUND_SCORE_DROP
     )
-    weak_composite = composite is not None and composite < COMPOSITE_EXIT
+    weak_composite = composite_percentile is not None and composite_percentile < COMPOSITE_EXIT
     weak_coverage = interest_coverage is not None and interest_coverage < MIN_INTEREST_COVERAGE
     if dropped or weak_composite or weak_coverage:
         return SellAction(1.0, "fundamentals_deteriorated", bar_close, pos.stop_price, highest, 0)

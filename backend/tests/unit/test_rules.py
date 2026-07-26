@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 
 from app.domain.rules import (
+    GATE_HARD,
+    GATE_PORTFOLIO,
+    GATE_SCORE,
     MAX_POSITIONS,
     BuyContext,
     PositionState,
@@ -47,8 +50,12 @@ def test_size_none_when_dust_or_bad_inputs() -> None:
 # --- buy gate -------------------------------------------------------------
 
 def _buy_ctx(**over: object) -> BuyContext:
+    # composite is the raw mean-of-percentiles (clusters near 50); composite_percentile is
+    # the gated unit. A raw 85 is unreachable in practice, which is why the old baseline
+    # here never caught the calibration bug — see docs and test_strategy.py.
     base = dict(
-        composite=85.0, rank=3, rank_threshold=50, data_completeness=0.9,
+        composite=61.0, composite_percentile=92.0, rank=3, rank_threshold=50,
+        data_completeness=0.9,
         price_above_50dma=True, fresh_breakout=True, macd_bullish=False,
         days_to_earnings=30, positions_held=5, sector_weight=0.1, entries_today=0,
         cash_available=50_000, already_held=False,
@@ -58,23 +65,80 @@ def _buy_ctx(**over: object) -> BuyContext:
 
 
 def test_buy_passes_all_gates() -> None:
-    ok, reason = evaluate_buy(_buy_ctx())
-    assert ok and reason == "buy"
+    v = evaluate_buy(_buy_ctx())
+    assert v.passed and v.reason == "buy"
 
 
 def test_buy_rejections() -> None:
-    assert evaluate_buy(_buy_ctx(composite=65))[1] == "composite_below_min"
-    assert evaluate_buy(_buy_ctx(rank=80))[1] == "not_top_decile"
-    assert evaluate_buy(_buy_ctx(data_completeness=0.5))[1] == "insufficient_data"
-    assert evaluate_buy(_buy_ctx(price_above_50dma=False))[1] == "below_50dma"
-    assert evaluate_buy(_buy_ctx(fresh_breakout=False, macd_bullish=False))[1] == (
-        "no_technical_trigger"
+    cases = {
+        "composite_below_min": _buy_ctx(composite_percentile=65),
+        "not_top_decile": _buy_ctx(rank=80),
+        "insufficient_data": _buy_ctx(data_completeness=0.5),
+        "below_50dma": _buy_ctx(price_above_50dma=False),
+        "no_technical_trigger": _buy_ctx(fresh_breakout=False, macd_bullish=False),
+        "earnings_proximity": _buy_ctx(days_to_earnings=3),
+        "max_positions": _buy_ctx(positions_held=MAX_POSITIONS),
+        "sector_cap": _buy_ctx(sector_weight=0.30),
+        "daily_entry_cap": _buy_ctx(entries_today=3),
+        "already_held": _buy_ctx(already_held=True),
+        "insufficient_cash": _buy_ctx(cash_available=0.0),
+    }
+    for expected, ctx in cases.items():
+        v = evaluate_buy(ctx)
+        assert not v.passed and v.reason == expected
+
+
+def test_unscored_name_is_insufficient_data_not_below_min() -> None:
+    """A name the engine could not score is missing data, not weakly scored.
+
+    Reporting composite_below_min here blamed a threshold the name never reached, which
+    is what made the journal read as one uniform failure."""
+    assert evaluate_buy(_buy_ctx(composite=None, composite_percentile=None)).reason == (
+        "insufficient_data"
     )
-    assert evaluate_buy(_buy_ctx(days_to_earnings=3))[1] == "earnings_proximity"
-    assert evaluate_buy(_buy_ctx(positions_held=MAX_POSITIONS))[1] == "max_positions"
-    assert evaluate_buy(_buy_ctx(sector_weight=0.30))[1] == "sector_cap"
-    assert evaluate_buy(_buy_ctx(entries_today=3))[1] == "daily_entry_cap"
-    assert evaluate_buy(_buy_ctx(already_held=True))[1] == "already_held"
+
+
+def test_every_rejection_is_classified_by_gate_kind() -> None:
+    """The journal must say whether a hard rule vetoed the name or its score fell short."""
+    expected_kind = {
+        "composite_below_min": GATE_SCORE,
+        "not_top_decile": GATE_SCORE,
+        "insufficient_data": GATE_HARD,
+        "below_50dma": GATE_HARD,
+        "no_technical_trigger": GATE_HARD,
+        "earnings_proximity": GATE_HARD,
+        "max_positions": GATE_PORTFOLIO,
+        "sector_cap": GATE_PORTFOLIO,
+        "daily_entry_cap": GATE_PORTFOLIO,
+        "insufficient_cash": GATE_PORTFOLIO,
+        "already_held": GATE_PORTFOLIO,
+    }
+    overrides: dict[str, dict[str, object]] = {
+        "composite_below_min": {"composite_percentile": 65},
+        "not_top_decile": {"rank": 80},
+        "insufficient_data": {"data_completeness": 0.5},
+        "below_50dma": {"price_above_50dma": False},
+        "no_technical_trigger": {"fresh_breakout": False, "macd_bullish": False},
+        "earnings_proximity": {"days_to_earnings": 3},
+        "max_positions": {"positions_held": MAX_POSITIONS},
+        "sector_cap": {"sector_weight": 0.30},
+        "daily_entry_cap": {"entries_today": 3},
+        "insufficient_cash": {"cash_available": 0.0},
+        "already_held": {"already_held": True},
+    }
+    for reason, kind in expected_kind.items():
+        v = evaluate_buy(_buy_ctx(**overrides[reason]))
+        assert v.reason == reason
+        assert v.gate_kind == kind, f"{reason} classified as {v.gate_kind}"
+
+
+def test_rejection_detail_carries_the_deciding_numbers() -> None:
+    v = evaluate_buy(_buy_ctx(composite_percentile=65))
+    assert v.detail["composite_percentile"] == 65
+    assert v.detail["min_composite_percentile"] == 70.0
+    assert v.detail["shortfall"] == 5.0
+    assert v.detail["rank"] == 3
+    assert v.detail["rank_threshold"] == 50
 
 
 # --- sell rules -----------------------------------------------------------
@@ -92,7 +156,7 @@ def _pos(**over: object) -> PositionState:
 
 def _sell(pos: PositionState, o: float, h: float, low: float, c: float, **kw: object):
     base = dict(
-        composite=75.0, fundamentals_score=68.0, momentum_score=60.0,
+        composite_percentile=75.0, fundamentals_score=68.0, momentum_score=60.0,
         interest_coverage=8.0, price_below_50dma=False, macd_bearish=False,
     )
     base.update(kw)
@@ -119,6 +183,18 @@ def test_sell_target_trims_half_and_moves_breakeven() -> None:
 def test_sell_fundamentals_deterioration() -> None:
     a = _sell(_pos(), o=101, h=102, low=99, c=100, fundamentals_score=40.0)  # drop > 20
     assert a.fraction == 1.0 and a.reason == "fundamentals_deteriorated"
+
+
+def test_sell_on_weak_composite_percentile() -> None:
+    """COMPOSITE_EXIT is on the percentile scale, so a bottom-quartile name actually exits.
+
+    On the raw composite scale the old threshold of 40 was a -1.7 sigma event that never
+    fired, which is why positions only ever left via stops."""
+    a = _sell(_pos(), o=101, h=102, low=99, c=100, composite_percentile=15.0)
+    assert a.fraction == 1.0 and a.reason == "fundamentals_deteriorated"
+    # A merely mediocre name is not an exit.
+    b = _sell(_pos(), o=101, h=102, low=99, c=100, composite_percentile=45.0)
+    assert b.fraction == 0.0 and b.reason == "hold"
 
 
 def test_sell_trend_reversal_needs_two_days() -> None:

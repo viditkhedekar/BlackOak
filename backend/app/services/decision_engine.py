@@ -38,7 +38,15 @@ from app.domain.regime import DMA_LONG, build_features, classify_raw, resolve
 from app.domain.rules import PositionState
 from app.domain.signals import EstimateValues, SignalInputs, compute_signals
 from app.domain.stats import sma
-from app.domain.strategy import WEIGHTS_BY_REGIME, StrategyCompany, fuse_scores
+from app.domain.strategy import (
+    MIN_COMPOSITE_PERCENTILE,
+    WEIGHTS_BY_REGIME,
+    StrategyCompany,
+    StrategyScore,
+    fuse_scores,
+    score_attribution,
+    weakest_metrics,
+)
 from app.services.execution import place_order
 from app.services.job_tracking import track_job
 from app.services.ports import BrokerClient
@@ -48,6 +56,11 @@ log = structlog.get_logger()
 
 STALENESS_MAX_DAYS = 4  # halt if the latest bar is older than this
 DAILY_LOSS_HALT = -0.03  # no new entries once the day is down this much
+
+# A 500-name universe skips ~490 candidates a cycle. Names that got within this multiple
+# of the rank cutoff were genuinely in contention, so they earn a full evidence payload;
+# the rest are rolled into one summary row to keep the journal readable.
+JOURNAL_DETAIL_RANK_MULT = 2
 
 
 @dataclass
@@ -325,12 +338,76 @@ def _decision_rows(
             "evidence": {"shares": entry.shares, "ref_price": entry.ref_price,
                          "stop": entry.stop_price, "target": entry.target_price,
                          "composite": entry.entry_composite,
-                         "rank": d.score.rank if d else None},
+                         "composite_percentile": d.score.composite_percentile if d else None,
+                         "min_composite_percentile": MIN_COMPOSITE_PERCENTILE,
+                         "rank": d.score.rank if d else None,
+                         "rank_threshold": plan.rank_threshold,
+                         **(_score_evidence(d.score, WEIGHTS_BY_REGIME[regime]) if d else {})},
         })
-    for symbol, reason in plan.skips:
+    rows.extend(_skip_rows(cycle_id, now, regime, plan, cycle_data))
+    return rows
+
+
+def _score_evidence(score: StrategyScore, weights: dict[str, float]) -> dict[str, object]:
+    """The scoring half of a skip explanation: families, what dragged, what was missing."""
+    return {
+        "families": dict(score.families),
+        "detractors": [
+            {"family": c.family, "score": c.score, "weight": c.weight,
+             "contribution": c.contribution}
+            for c in score_attribution(score, weights)
+            if c.contribution < 0
+        ],
+        "weakest_metrics": [
+            {"metric": m, "score": s} for m, s in weakest_metrics(score)
+        ],
+        "metrics_present": score.metrics_present,
+        "metrics_applicable": score.metrics_applicable,
+    }
+
+
+def _skip_rows(
+    cycle_id: uuid.UUID,
+    now: datetime,
+    regime: str,
+    plan: CyclePlan,
+    cycle_data: dict[str, SymbolCycleData],
+) -> list[dict[str, object]]:
+    """Full evidence for names that were in contention, one summary row for the rest."""
+    weights = WEIGHTS_BY_REGIME[regime]
+    detail_cutoff = JOURNAL_DETAIL_RANK_MULT * plan.rank_threshold
+    rows: list[dict[str, object]] = []
+    rolled: dict[str, int] = {}
+    rolled_kinds: dict[str, int] = {}
+
+    for skip in plan.skips:
+        in_contention = skip.rank is not None and skip.rank <= detail_cutoff
+        if not in_contention:
+            rolled[skip.reason] = rolled.get(skip.reason, 0) + 1
+            rolled_kinds[skip.gate_kind] = rolled_kinds.get(skip.gate_kind, 0) + 1
+            continue
+        evidence: dict[str, object] = {"gate_kind": skip.gate_kind, **skip.detail}
+        d = cycle_data.get(skip.symbol)
+        if d is not None:
+            evidence.update(_score_evidence(d.score, weights))
         rows.append({
-            "cycle_id": cycle_id, "ts": now, "symbol": symbol, "action": "skip",
-            "reason": reason, "regime": regime, "evidence": {},
+            "cycle_id": cycle_id, "ts": now, "symbol": skip.symbol, "action": "skip",
+            "reason": skip.reason, "regime": regime, "evidence": evidence,
+        })
+
+    if rolled:
+        rows.append({
+            "cycle_id": cycle_id, "ts": now, "symbol": "*", "action": "skip",
+            "reason": "skip_summary", "regime": regime,
+            "evidence": {
+                "n_skipped": sum(rolled.values()),
+                "n_detailed": len(rows),
+                "rank_threshold": plan.rank_threshold,
+                "detail_rank_cutoff": detail_cutoff,
+                "min_composite_percentile": MIN_COMPOSITE_PERCENTILE,
+                "by_reason": dict(sorted(rolled.items(), key=lambda kv: -kv[1])),
+                "by_gate_kind": dict(sorted(rolled_kinds.items(), key=lambda kv: -kv[1])),
+            },
         })
     return rows
 
