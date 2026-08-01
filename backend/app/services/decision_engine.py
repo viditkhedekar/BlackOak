@@ -152,10 +152,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
                                   positions[intent.symbol].shares * intent.action.fraction,
                                   intent.action.reason)
                 sells += 1
-                if intent.action.fraction >= 1.0:
-                    await thesis_repo.delete_symbol(intent.symbol)
-            else:  # hold → persist advanced trail state
-                await _update_thesis_trail(thesis_repo, intent)
+            await _persist_exit_state(thesis_repo, intent)
 
         if not entries_locked:
             for entry in plan.entries:
@@ -251,7 +248,13 @@ async def _build_snapshot(
         inputs = inputs_by_symbol[symbol]
         if score is None:
             continue
-        latest_date = bar.date  # type: ignore[attr-defined]
+        # The freshest bar in the universe, not whichever symbol happened to be iterated
+        # last: the fuse asks "is the price feed stale?", and a single delisted or halted
+        # ticker sorting last would otherwise halt all trading (or, the other way round, a
+        # fresh one last would mask a genuinely stale feed).
+        bar_date: date = bar.date  # type: ignore[attr-defined]
+        if latest_date is None or bar_date > latest_date:
+            latest_date = bar_date
         atr_pct = sig["technical"].get("atr_pct")
         close = float(bar.close)  # type: ignore[attr-defined]
         cycle_data[symbol] = SymbolCycleData(
@@ -460,7 +463,21 @@ def _thesis_row(entry) -> dict[str, object]:  # type: ignore[no-untyped-def]
     }
 
 
-async def _update_thesis_trail(thesis_repo, intent) -> None:  # type: ignore[no-untyped-def]
+async def _persist_exit_state(thesis_repo, intent) -> None:  # type: ignore[no-untyped-def]
+    """Write back the trail state an exit intent leaves behind.
+
+    A full exit drops the thesis. A hold and a *partial* trim both leave the position
+    open, so both must persist the advanced stop / high-water mark / reversal counter —
+    and a trim must additionally latch ``took_partial``. Without that latch the next
+    30-minute cycle reloads an untrimmed thesis, the target gate fires again, and the
+    position is halved once more every cycle for as long as price holds above the
+    target, while the breakeven stop the trim earned is silently discarded. The
+    backtester already did this (SimPortfolio.sell sets took_partial); this keeps the
+    live engine at parity.
+    """
+    if intent.action.fraction >= 1.0:
+        await thesis_repo.delete_symbol(intent.symbol)
+        return
     existing = await thesis_repo.get(intent.symbol)
     if existing is None:
         return
@@ -470,7 +487,7 @@ async def _update_thesis_trail(thesis_repo, intent) -> None:  # type: ignore[no-
         "stop_price": intent.action.new_stop, "target_price": existing.target_price,
         "entry_composite": existing.entry_composite,
         "entry_fundamentals_score": existing.entry_fundamentals_score,
-        "took_partial": existing.took_partial,
+        "took_partial": existing.took_partial or intent.action.fraction > 0,
         "highest_close": intent.action.new_highest_close,
         "reversal_days": intent.action.reversal_days,
     })
