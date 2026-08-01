@@ -54,7 +54,10 @@ class AlpacaPaperBroker:
 
         self._client = TradingClient(api_key, secret_key, paper=True)
         # Belt-and-suspenders: refuse anything that isn't the paper endpoint.
-        base = str(getattr(self._client, "_base_url", PAPER_HOST))
+        # alpaca-py stores _base_url as a BaseURL enum whose str() is the member name,
+        # not the URL — read .value first or the guard rejects the paper host itself.
+        raw_base = getattr(self._client, "_base_url", PAPER_HOST)
+        base = str(getattr(raw_base, "value", raw_base))
         if PAPER_HOST not in base:
             raise RuntimeError(f"refusing non-paper broker endpoint: {base!r}")
         self._orders_today = 0

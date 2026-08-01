@@ -5,12 +5,16 @@ from __future__ import annotations
 import math
 
 from app.domain.rules import (
+    CANDIDATE_POOL_MAX_PCT,
+    CANDIDATE_POOL_MULT,
     GATE_HARD,
     GATE_PORTFOLIO,
     GATE_SCORE,
+    MAX_ENTRIES_PER_DAY,
     MAX_POSITIONS,
     BuyContext,
     PositionState,
+    candidate_pool_size,
     evaluate_buy,
     evaluate_sell,
 )
@@ -24,18 +28,17 @@ from app.domain.sizing import (
 # --- sizing ---------------------------------------------------------------
 
 def test_size_risk_budget_binds_for_volatile_name() -> None:
-    # High ATR → risk budget limits size below the 8% cap.
-    s = size_position(equity=100_000, price=100, atr=5, cash_available=100_000)
+    # High ATR → the risk budget limits size below the max-position cap.
+    s = size_position(equity=100_000, price=100, atr=10, cash_available=100_000)
     assert s is not None
-    # risk_amount ≈ 0.75% of equity
     assert math.isclose(s.risk_amount, RISK_BUDGET_PCT * 100_000, rel_tol=1e-9)
     # stop is 2.5 ATR below entry
-    assert math.isclose(s.stop_price, 100 - STOP_ATR_MULT * 5, rel_tol=1e-9)
+    assert math.isclose(s.stop_price, 100 - STOP_ATR_MULT * 10, rel_tol=1e-9)
     assert s.notional < MAX_POSITION_PCT * 100_000 + 1
 
 
 def test_size_position_cap_binds_for_calm_name() -> None:
-    # Tiny ATR → risk budget would allow a huge position, so the 8% cap binds.
+    # Tiny ATR → the risk budget would allow a huge position, so the position cap binds.
     s = size_position(equity=100_000, price=100, atr=0.1, cash_available=100_000)
     assert s is not None
     assert math.isclose(s.notional, MAX_POSITION_PCT * 100_000, rel_tol=1e-6)
@@ -47,6 +50,38 @@ def test_size_none_when_dust_or_bad_inputs() -> None:
     assert size_position(equity=100_000, price=0, atr=5, cash_available=100) is None
 
 
+def test_sizing_leaves_room_for_a_full_book() -> None:
+    """MAX_POSITION_PCT and MAX_POSITIONS must agree, or cash binds before the book fills.
+
+    At the old 0.08 x 20 the book exhausted equity after ~12 names and every candidate
+    after that skipped on insufficient_cash, so the stated position limit was fiction."""
+    assert MAX_POSITION_PCT * MAX_POSITIONS >= 1.0, (
+        f"{MAX_POSITIONS} positions at {MAX_POSITION_PCT:.1%} each cannot be funded"
+    )
+
+
+def test_a_full_book_is_actually_fundable() -> None:
+    """Walk the sizing function down a book of typical names and confirm it fills."""
+    equity, cash, funded = 100_000.0, 100_000.0, 0
+    while funded < MAX_POSITIONS:
+        s = size_position(equity=equity, price=100.0, atr=2.0, cash_available=cash)
+        if s is None:
+            break
+        cash -= s.notional
+        funded += 1
+    assert funded == MAX_POSITIONS, f"cash ran out after {funded} positions"
+
+
+def test_candidate_pool_scales_with_the_book_and_the_universe() -> None:
+    # Large universe: the pool tracks the book (2x MAX_POSITIONS).
+    assert candidate_pool_size(500) == math.ceil(CANDIDATE_POOL_MULT * MAX_POSITIONS)
+    # Small universe: never let in more than a fraction of what was scored.
+    assert candidate_pool_size(25) == math.floor(CANDIDATE_POOL_MAX_PCT * 25)
+    # Degenerate inputs still admit at least one name.
+    assert candidate_pool_size(0) == 1
+    assert candidate_pool_size(1) == 1
+
+
 # --- buy gate -------------------------------------------------------------
 
 def _buy_ctx(**over: object) -> BuyContext:
@@ -55,7 +90,8 @@ def _buy_ctx(**over: object) -> BuyContext:
     # here never caught the calibration bug — see docs and test_strategy.py.
     base = dict(
         composite=61.0, composite_percentile=92.0, rank=3, rank_threshold=50,
-        data_completeness=0.9,
+        in_candidate_pool=True, sector_pool_full=False,
+        data_completeness=0.9, weight_covered=1.0,
         price_above_50dma=True, fresh_breakout=True, macd_bullish=False,
         days_to_earnings=30, positions_held=5, sector_weight=0.1, entries_today=0,
         cash_available=50_000, already_held=False,
@@ -72,14 +108,15 @@ def test_buy_passes_all_gates() -> None:
 def test_buy_rejections() -> None:
     cases = {
         "composite_below_min": _buy_ctx(composite_percentile=65),
-        "not_top_decile": _buy_ctx(rank=80),
-        "insufficient_data": _buy_ctx(data_completeness=0.5),
+        "outside_candidate_pool": _buy_ctx(rank=80, in_candidate_pool=False),
+        "sector_pool_cap": _buy_ctx(sector_pool_full=True),
+        "insufficient_data": _buy_ctx(data_completeness=0.2),
         "below_50dma": _buy_ctx(price_above_50dma=False),
         "no_technical_trigger": _buy_ctx(fresh_breakout=False, macd_bullish=False),
         "earnings_proximity": _buy_ctx(days_to_earnings=3),
         "max_positions": _buy_ctx(positions_held=MAX_POSITIONS),
         "sector_cap": _buy_ctx(sector_weight=0.30),
-        "daily_entry_cap": _buy_ctx(entries_today=3),
+        "daily_entry_cap": _buy_ctx(entries_today=MAX_ENTRIES_PER_DAY),
         "already_held": _buy_ctx(already_held=True),
         "insufficient_cash": _buy_ctx(cash_available=0.0),
     }
@@ -98,11 +135,27 @@ def test_unscored_name_is_insufficient_data_not_below_min() -> None:
     )
 
 
+def test_scattered_missing_metrics_do_not_block_a_name() -> None:
+    """Less brittle: gaps spread across families cost nothing, because each family still
+    scores and the composite renormalizes over the survivors."""
+    v = evaluate_buy(_buy_ctx(data_completeness=0.62, weight_covered=1.0))
+    assert v.passed, v.reason
+
+
+def test_name_missing_whole_families_is_held_out() -> None:
+    """A bank with no valuation or fundamentals input is scored on price action alone.
+    That is genuinely insufficient data however strong its momentum looks."""
+    v = evaluate_buy(_buy_ctx(data_completeness=1.0, weight_covered=0.65))
+    assert not v.passed and v.reason == "insufficient_data"
+    assert v.detail["missing"] == "families"
+    assert v.detail["weight_covered"] == 0.65
+
+
 def test_every_rejection_is_classified_by_gate_kind() -> None:
     """The journal must say whether a hard rule vetoed the name or its score fell short."""
     expected_kind = {
         "composite_below_min": GATE_SCORE,
-        "not_top_decile": GATE_SCORE,
+        "outside_candidate_pool": GATE_SCORE,
         "insufficient_data": GATE_HARD,
         "below_50dma": GATE_HARD,
         "no_technical_trigger": GATE_HARD,
@@ -115,14 +168,14 @@ def test_every_rejection_is_classified_by_gate_kind() -> None:
     }
     overrides: dict[str, dict[str, object]] = {
         "composite_below_min": {"composite_percentile": 65},
-        "not_top_decile": {"rank": 80},
-        "insufficient_data": {"data_completeness": 0.5},
+        "outside_candidate_pool": {"rank": 80},
+        "insufficient_data": {"data_completeness": 0.2},
         "below_50dma": {"price_above_50dma": False},
         "no_technical_trigger": {"fresh_breakout": False, "macd_bullish": False},
         "earnings_proximity": {"days_to_earnings": 3},
         "max_positions": {"positions_held": MAX_POSITIONS},
         "sector_cap": {"sector_weight": 0.30},
-        "daily_entry_cap": {"entries_today": 3},
+        "daily_entry_cap": {"entries_today": MAX_ENTRIES_PER_DAY},
         "insufficient_cash": {"cash_available": 0.0},
         "already_held": {"already_held": True},
     }

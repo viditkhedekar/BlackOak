@@ -18,6 +18,7 @@ from app.domain.signals.inputs import SIGNAL_FAMILIES
 from app.domain.strategy import (
     MIN_COMPOSITE_PERCENTILE,
     MIN_DATA_COMPLETENESS,
+    MIN_WEIGHT_COVERAGE,
     WEIGHTS_BY_REGIME,
     StrategyCompany,
     fuse_scores,
@@ -223,6 +224,76 @@ def test_sector_inapplicable_metric_only_excused_for_that_sector() -> None:
     # And nobody is penalised: every name has all of what its own peers have.
     assert all(s.data_completeness == 1.0 for s in scores.values())
     assert all(s.data_completeness >= MIN_DATA_COMPLETENESS for s in banks)
+
+
+def test_weight_covered_tracks_the_families_that_scored() -> None:
+    """weight_covered is what the data gate compares against: the share of the strategy's
+    thesis the engine could actually evaluate."""
+    full = fuse_scores(_with_missing({}), "neutral")
+    assert all(abs(s.weight_covered - 1.0) < 1e-9 for s in full)
+
+    # Wipe valuation for everyone → the family is dropped and its weight goes uncovered.
+    no_valuation = fuse_scores(
+        _with_missing({"valuation": SIGNAL_FAMILIES["valuation"]}), "neutral"
+    )
+    expected = 1.0 - WEIGHTS_BY_REGIME["neutral"]["valuation"]
+    assert all(abs(s.weight_covered - expected) < 1e-9 for s in no_valuation)
+    assert all(s.families["valuation"] is None for s in no_valuation)
+
+
+def test_bank_shaped_name_falls_below_the_coverage_floor() -> None:
+    """The JPM case end to end.
+
+    Banks report no EBITDA, gross margin, FCF or interest coverage, but they share the
+    Financials sector with payment networks that report all of them — so GICS sector is
+    too coarse a cohort to excuse the gap, and a flat metric-count floor misfires on
+    exactly this name. Weight coverage gets it right: both fundamental families collapse,
+    so the name is held out rather than waved through on momentum alone.
+    """
+    rng = random.Random(11)
+    bank_gaps = {
+        "valuation": ["ev_ebitda", "fcf_yield", "price_to_book", "forward_pe"],
+        "fundamentals": ["gross_margin", "operating_margin", "roic", "interest_coverage",
+                         "ebit_growth_3y"],
+    }
+    companies = []
+    for i in range(40):
+        sector = _SECTORS[i % len(_SECTORS)]
+        signals: dict[str, dict[str, float | None]] = {
+            family: {m: rng.gauss(0.0, 1.0) for m in metrics}
+            for family, metrics in SIGNAL_FAMILIES.items()
+        }
+        # A minority of the Financials cohort; its peers still report everything.
+        is_bank = sector == "Financials" and i % 15 == 2
+        if is_bank:
+            for family, metrics in bank_gaps.items():
+                for m in metrics:
+                    signals[family][m] = None
+        companies.append(
+            StrategyCompany(f"{'BANK' if is_bank else 'S'}{i}", sector, signals)
+        )
+
+    scores = fuse_scores(companies, "risk_on")
+    banks = [s for s in scores if s.symbol.startswith("BANK")]
+    peers = [s for s in scores if not s.symbol.startswith("BANK")]
+    assert banks and peers
+
+    # The metrics stay applicable (the cohort's payment networks report them), so both
+    # families fall under the >=50% rule. They are no longer dropped — dropping them
+    # renormalized the remaining weight and paid the name a bonus for its own data gap —
+    # they are imputed from the sector median and flagged.
+    assert all(set(s.imputed_families) == {"valuation", "fundamentals"} for s in banks)
+    assert all(s.families["valuation"] is not None for s in banks)
+    assert all(s.families["fundamentals"] is not None for s in banks)
+    assert all(not s.imputed_families for s in peers)
+
+    # The name is still held out rather than waved through on momentum alone: coverage
+    # reports OBSERVED weight only, and 0.15 + 0.20 of imputed weight breaches the cap,
+    # so the composite refuses to rank it at all.
+    assert all(s.weight_covered < MIN_WEIGHT_COVERAGE for s in banks)
+    assert all(abs(s.weight_covered - 1.0) < 1e-9 for s in peers)
+    assert all(s.composite is None for s in banks)
+    assert all(s.composite is not None for s in peers)
 
 
 def test_family_survives_when_half_its_applicable_metrics_are_present() -> None:

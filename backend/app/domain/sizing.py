@@ -11,11 +11,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # Risk that one position's stop being hit costs, as a fraction of total equity.
-RISK_BUDGET_PCT = 0.0075
+# Sized for a MAX_POSITIONS-name book: risk budget x position count is the portfolio's
+# worst case if every stop is hit at once, so these two move together.
+RISK_BUDGET_PCT = 0.004
 STOP_ATR_MULT = 2.5
 TARGET_ATR_MULT = 3.0
 TRAIL_ATR_MULT = 3.0  # chandelier trail distance once past +1R
-MAX_POSITION_PCT = 0.08
+# Must leave room for MAX_POSITIONS names to be funded from one book of equity. At the
+# old 0.08 a typical 2%-ATR name sized straight to the cap, so cash ran out after ~12
+# positions and everything after that skipped on insufficient_cash — the stated limit of
+# 20 was never reachable.
+MAX_POSITION_PCT = 0.025
 MIN_NOTIONAL = 100.0  # skip dust positions
 
 

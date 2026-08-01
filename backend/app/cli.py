@@ -25,6 +25,7 @@ from app.services.ingest import ingest_prices
 from app.services.intraday_ingest import ingest_intraday
 from app.services.macro_ingest import ingest_macro
 from app.services.providers import (
+    get_broker,
     get_fundamentals_provider,
     get_intraday_provider,
     get_macro_provider,
@@ -119,6 +120,50 @@ async def _signals() -> None:
     )
 
 
+async def _cycle() -> None:
+    """Run one autonomous decision cycle now — the same code path the scheduler fires."""
+    from app.services.decision_engine import run_decision_cycle
+
+    settings = get_settings()
+    broker = get_broker(settings)
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await run_decision_cycle(session, broker)
+        await session.commit()
+    log.info(
+        "cli.cycle.done",
+        cycle_id=str(report.cycle_id),
+        regime=report.regime,
+        scored=report.n_scored,
+        buys=report.buys,
+        sells=report.sells,
+        holds=report.holds,
+        skips=report.skips,
+        halted=report.halted,
+        halt_reason=report.halt_reason,
+    )
+
+
+async def _refresh() -> None:
+    """Run the twice-daily price refresh now (trailing window ingest + rescore)."""
+    from app.jobs.eod_ingest import run_eod_ingest
+
+    await run_eod_ingest(job_name="manual_refresh")
+
+
+async def _reconcile() -> None:
+    """Re-sync the local position mirror from broker truth (fills land asynchronously)."""
+    from app.services.reconciliation import reconcile_positions
+
+    settings = get_settings()
+    broker = get_broker(settings)
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await reconcile_positions(session, broker)
+        await session.commit()
+    log.info("cli.reconcile.done", report=report)
+
+
 async def _backtest(start: str, end: str, cash: float) -> None:
     from datetime import date
 
@@ -144,6 +189,21 @@ async def _backtest(start: str, end: str, cash: float) -> None:
         vs_spy_excess=round(spy.excess_return or 0.0, 4) if spy else None,
         regime_days=metrics.regime_days,
     )
+
+
+async def _rank_ic(start: str, end: str, horizon: int, step: int) -> None:
+    from datetime import date
+
+    from app.backtest.loader import load_backtest_data
+    from app.backtest.rank_ic import evaluate_ranking
+
+    factory = get_session_factory()
+    async with factory() as session:
+        data = await load_backtest_data(session)
+    report = evaluate_ranking(
+        data, date.fromisoformat(start), date.fromisoformat(end), horizon=horizon, step=step
+    )
+    log.info("cli.rank_ic.done", **report.to_dict())
 
 
 async def _macro(years: int) -> None:
@@ -212,6 +272,18 @@ def main() -> None:
 
     sub.add_parser("signals", help="Run the v2 signal pipeline (regime + fused scores)")
 
+    sub.add_parser("cycle", help="Run one autonomous decision cycle now (places paper orders)")
+
+    sub.add_parser("reconcile", help="Re-sync the local position mirror from the broker")
+
+    sub.add_parser("refresh", help="Run the daily price refresh + rescore now")
+
+    ric = sub.add_parser("rank-ic", help="Measure ranking quality: rank IC + decile spread")
+    ric.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
+    ric.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
+    ric.add_argument("--horizon", type=int, default=21, help="forward return, sessions")
+    ric.add_argument("--step", type=int, default=21, help="sessions between eval dates")
+
     bt = sub.add_parser("backtest", help="Run a daily backtest of the v2 strategy")
     bt.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
     bt.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
@@ -234,6 +306,14 @@ def main() -> None:
         asyncio.run(_macro(args.years))
     elif args.command == "signals":
         asyncio.run(_signals())
+    elif args.command == "cycle":
+        asyncio.run(_cycle())
+    elif args.command == "reconcile":
+        asyncio.run(_reconcile())
+    elif args.command == "refresh":
+        asyncio.run(_refresh())
+    elif args.command == "rank-ic":
+        asyncio.run(_rank_ic(args.start, args.end, args.horizon, args.step))
     elif args.command == "backtest":
         asyncio.run(_backtest(args.start, args.end, args.cash))
 

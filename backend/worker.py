@@ -22,12 +22,14 @@ log = structlog.get_logger()
 
 def build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="America/New_York")
-    # Intraday bar poll: every 15 min during RTH (job skips non-trading days).
+    # Intraday bar poll: every 5 min during RTH (job skips non-trading days). The Alpaca
+    # adapter batches all 503 symbols into one request, so the cadence costs ~78 requests
+    # a day against a 200/min limit — freshness here is close to free.
     scheduler.add_job(
         run_intraday_poll,
-        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="0,15,30,45"),
+        CronTrigger(day_of_week="mon-fri", hour="9-16", minute="*/5"),
         id="intraday_poll",
-        misfire_grace_time=300,
+        misfire_grace_time=240,
         coalesce=True,
         max_instances=1,
     )
@@ -40,11 +42,24 @@ def build_scheduler() -> AsyncIOScheduler:
         coalesce=True,
         max_instances=1,
     )
-    # EOD: 16:30 ET on weekdays — ingest prices then rescore (job skips holidays).
+    # Prices refresh twice a weekday, both passes ingesting then rescoring.
+    # 08:30 ET pre-open: picks up the vendor's overnight restatements of the prior
+    # session (adjustments, late corrections) before the first decision cycle at 09:45.
+    scheduler.add_job(
+        run_eod_ingest,
+        CronTrigger(day_of_week="mon-fri", hour=8, minute=30),
+        id="premarket_ingest",
+        kwargs={"job_name": "premarket_ingest"},
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
+    # 16:30 ET post-close: the session that just ended (job skips holidays).
     scheduler.add_job(
         run_eod_ingest,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=30),
         id="eod_ingest",
+        kwargs={"job_name": "eod_ingest"},
         misfire_grace_time=3600,
         coalesce=True,
         max_instances=1,

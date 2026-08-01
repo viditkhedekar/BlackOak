@@ -10,7 +10,6 @@ byte identical in both worlds. That equality is the R4 parity gate.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -19,12 +18,14 @@ from app.domain.rules import (
     BuyContext,
     PositionState,
     SellAction,
+    build_candidate_pool,
+    candidate_pool_size,
     evaluate_buy,
     evaluate_sell,
 )
 from app.domain.sizing import size_position
 from app.domain.stats import sma
-from app.domain.strategy import TOP_DECILE, StrategyScore
+from app.domain.strategy import StrategyScore
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,10 +133,16 @@ def plan_entries(
     """Plan new entries in composite-rank order, funding the strongest first. Returns
     (entries, skips, rank_threshold) where skips carry the gate reason and its evidence
     for the decision journal."""
-    rank_threshold = max(1, math.ceil(TOP_DECILE * n_scored))
+    rank_threshold = candidate_pool_size(n_scored)
     # Unranked names are kept as candidates (sorted last) so they are journaled as
     # insufficient_data rather than vanishing from the audit trail.
     candidates = sorted(data.values(), key=lambda d: d.score.rank or 10**9)
+    # The pool is sector-capped before any gate runs, so a single crowded sector cannot
+    # take the whole thing and crowd out better-diversified names further down the rank.
+    pool, capped_out = build_candidate_pool(
+        [(d.symbol, d.sector) for d in candidates if d.score.rank is not None],
+        rank_threshold,
+    )
     entries: list[EntryIntent] = []
     skips: list[SkipRecord] = []
     running_cash = cash
@@ -153,7 +160,10 @@ def plan_entries(
             composite_percentile=d.score.composite_percentile,
             rank=d.score.rank,
             rank_threshold=rank_threshold,
+            in_candidate_pool=sym in pool,
+            sector_pool_full=sym in capped_out,
             data_completeness=d.score.data_completeness,
+            weight_covered=d.score.weight_covered,
             price_above_50dma=flags["price_above_50dma"],
             fresh_breakout=flags["fresh_breakout"],
             macd_bullish=flags["macd_bullish"],

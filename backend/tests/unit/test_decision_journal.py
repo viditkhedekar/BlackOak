@@ -195,7 +195,7 @@ def test_unscorable_name_is_journaled_as_insufficient_data() -> None:
     blank_skip = next(s for s in plan.skips if s.symbol == "BLANK")
     assert blank_skip.reason == "insufficient_data"
     assert blank_skip.gate_kind == GATE_HARD
-    assert blank_skip.detail["unscored"] is True
+    assert blank_skip.detail["missing"] == "unscored"
 
 
 # --- journal rows: near-miss detail plus a rollup --------------------------
@@ -203,7 +203,7 @@ def test_unscorable_name_is_journaled_as_insufficient_data() -> None:
 def _rows(plan, data: dict[str, SymbolCycleData]) -> list[dict[str, object]]:
     return _decision_rows(
         uuid.uuid4(), datetime(2026, 7, 26, 15, 0, tzinfo=UTC), "neutral",
-        plan, data, halt_reason=None, entries_locked=False,
+        plan, data, halt_reason=None, entries_locked=False, n_scored=len(data),
     )
 
 

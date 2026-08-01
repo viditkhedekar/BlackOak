@@ -30,6 +30,7 @@ def _buy_ready(symbol: str, rank: int) -> SymbolCycleData:
         symbol=symbol,
         families={f: 80.0 for f in SIGNAL_FAMILIES},
         composite=62.0, rank=rank, data_completeness=0.9, composite_percentile=95.0,
+        weight_covered=1.0,
     )
     return SymbolCycleData(
         symbol=symbol, sector="Tech",

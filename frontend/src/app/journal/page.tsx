@@ -15,18 +15,49 @@ const ACTION_COLOR: Record<string, string> = {
   blocked: "hsl(280,45%,62%)",
 };
 
+const num = (v: unknown): string =>
+  typeof v === "number" ? v.toFixed(1) : "—";
+
+/** One line answering "why", when the gate fields are present. */
+function gateSummary(e: Record<string, unknown>): string | null {
+  if (e.composite_percentile === undefined && e.gate_kind === undefined) return null;
+  const parts = [
+    `score ${num(e.composite_percentile)} / ${num(e.min_composite_percentile)} needed`,
+  ];
+  if (typeof e.rank === "number") parts.push(`rank ${e.rank} / ${e.rank_threshold}`);
+  if (typeof e.weight_covered === "number") {
+    parts.push(`coverage ${num((e.weight_covered as number) * 100)}%`);
+  }
+  if (typeof e.gate_kind === "string" && e.gate_kind) {
+    parts.push(e.gate_kind.replace(/_/g, " "));
+  }
+  return parts.join("  ·  ");
+}
+
+/** Which families dragged the composite down, worst first. */
+function detractorSummary(e: Record<string, unknown>): string | null {
+  const d = e.detractors;
+  if (!Array.isArray(d) || d.length === 0) return null;
+  return d
+    .map((c) => {
+      const f = c as Record<string, unknown>;
+      return `${f.family} ${num(f.score)} (${num(f.contribution)})`;
+    })
+    .join("   ");
+}
+
 function evidenceText(evidence: Record<string, unknown>): string {
-  const keys = Object.keys(evidence);
-  if (keys.length === 0) return "";
-  return keys
-    .map((k) => `${k}=${JSON.stringify(evidence[k])}`)
-    .join("  ");
+  if (Object.keys(evidence).length === 0) return "";
+  return JSON.stringify(evidence, null, 2);
 }
 
 function DecisionItem({ d }: { d: DecisionRow }) {
   const [open, setOpen] = useState(false);
   const color = ACTION_COLOR[d.action] ?? "var(--muted)";
-  const hasEvidence = Object.keys(d.evidence as Record<string, unknown>).length > 0;
+  const evidence = d.evidence as Record<string, unknown>;
+  const hasEvidence = Object.keys(evidence).length > 0;
+  const gate = gateSummary(evidence);
+  const detractors = detractorSummary(evidence);
   return (
     <div className="border-b border-line/50">
       <button
@@ -51,9 +82,13 @@ function DecisionItem({ d }: { d: DecisionRow }) {
         </span>
       </button>
       {open && hasEvidence && (
-        <pre className="overflow-x-auto bg-background/60 px-4 py-2 font-mono text-[10px] text-muted">
-          {evidenceText(d.evidence as Record<string, unknown>)}
-        </pre>
+        <div className="bg-background/60 px-4 py-2 font-mono text-[10px] text-muted">
+          {gate && <div className="pb-1 text-foreground">{gate}</div>}
+          {detractors && <div className="pb-1">dragged down by: {detractors}</div>}
+          <pre className="overflow-x-auto">
+            {evidenceText(d.evidence as Record<string, unknown>)}
+          </pre>
+        </div>
       )}
     </div>
   );

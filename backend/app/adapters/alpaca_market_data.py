@@ -32,6 +32,18 @@ def _to_decimal(value: object) -> Decimal:
     return Decimal(str(value))
 
 
+# Class shares: our universe stores them Yahoo-style (BRK-B, BF-B) because that is what
+# the price feed seeds them from; Alpaca spells them with a dot (BRK.B) and rejects the
+# hyphen outright. A single bad ticker fails the whole batched request, so translate at
+# the adapter boundary and translate the response keys back to our canonical form.
+def _to_alpaca(symbol: str) -> str:
+    return symbol.replace("-", ".")
+
+
+def _from_alpaca(symbol: str) -> str:
+    return symbol.replace(".", "-")
+
+
 class AlpacaMarketData:
     name = "alpaca"
 
@@ -46,7 +58,7 @@ class AlpacaMarketData:
     )
     def fetch_daily_bars(self, symbol: str, start: date, end: date) -> list[Bar]:
         request = StockBarsRequest(
-            symbol_or_symbols=symbol,
+            symbol_or_symbols=_to_alpaca(symbol),
             timeframe=TimeFrame.Day,
             start=datetime.combine(start, time.min, tzinfo=UTC),
             end=datetime.combine(end, time.max, tzinfo=UTC),
@@ -54,7 +66,7 @@ class AlpacaMarketData:
         )
         barset = self._client.get_stock_bars(request)
         # get_stock_bars returns a BarSet whose .data maps symbol -> list[Bar].
-        rows = barset.data.get(symbol, [])  # type: ignore[union-attr]
+        rows = barset.data.get(_to_alpaca(symbol), [])  # type: ignore[union-attr]
         if not rows:
             log.info("alpaca.no_data", symbol=symbol, start=str(start), end=str(end))
             return []
@@ -90,7 +102,7 @@ class AlpacaMarketData:
             raise ValueError(f"Unsupported intraday interval: {interval}")
 
         request = StockBarsRequest(
-            symbol_or_symbols=symbols,
+            symbol_or_symbols=[_to_alpaca(s) for s in symbols],
             timeframe=timeframe,
             start=start,
             end=end,
@@ -99,9 +111,9 @@ class AlpacaMarketData:
         barset = self._client.get_stock_bars(request)
         data = barset.data  # type: ignore[union-attr]
         return {
-            symbol: [
+            _from_alpaca(symbol): [
                 IntradayBar(
-                    symbol=symbol,
+                    symbol=_from_alpaca(symbol),
                     ts=row.timestamp,
                     open=_to_decimal(row.open),
                     high=_to_decimal(row.high),

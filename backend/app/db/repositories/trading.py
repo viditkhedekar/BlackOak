@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +32,16 @@ class OrderRepository:
             select(Order).where(Order.client_order_id == client_order_id)
         )
         return result.scalar_one_or_none()
+
+    async def count_buys_since(self, since: datetime) -> int:
+        """Entries already placed today — the live engine runs many cycles a day, so the
+        daily entry cap has to be counted from the ledger, not from one cycle's plan."""
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(Order)
+            .where(Order.side == "buy", Order.submitted_at >= since)
+        )
+        return int(result.scalar_one())
 
 
 class ExecutionRepository:

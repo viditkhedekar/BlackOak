@@ -7,6 +7,7 @@ a machine-readable reason for the decision journal. No I/O, no clock, no DB.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -17,11 +18,26 @@ from app.domain.strategy import (
     MIN_WEIGHT_COVERAGE,
 )
 
-# Portfolio limits.
-MAX_POSITIONS = 20
-MAX_ENTRIES_PER_DAY = 3
+# Portfolio limits. MAX_POSITIONS is only reachable if sizing leaves room for it — see
+# MAX_POSITION_PCT in sizing.py, which must be <= 1 / MAX_POSITIONS or cash binds first.
+MAX_POSITIONS = 40
+MAX_ENTRIES_PER_DAY = 8
 MAX_SECTOR_PCT = 0.25
 EARNINGS_BLACKOUT_DAYS = 5
+
+# How many top-ranked names are eligible to buy each cycle. Scaled to the book rather
+# than fixed at a decile: a pool barely larger than the position limit makes the strategy
+# churn as ranks wobble around the cutoff, so aim for a multiple of MAX_POSITIONS while
+# never letting more than a fraction of the universe in.
+CANDIDATE_POOL_MULT = 2.0
+CANDIDATE_POOL_MAX_PCT = 0.20
+
+# No sector may take more than this share of the candidate pool. MAX_SECTOR_PCT caps the
+# *portfolio*, but by then the damage is done: the pool it draws from was itself skewed.
+# Measured before this cap, Financials held 31% of the top 80 against 15% of the universe
+# (2.07x) while Information Technology held 1 of 80 against 15% (0.08x) — a sector bet
+# the strategy never intended to place.
+MAX_SECTOR_POOL_PCT = 0.20
 
 # Sell thresholds. COMPOSITE_EXIT is on the composite *percentile* scale (bottom quartile
 # of the cross-section), matching the entry gate. It previously read 40 on the raw
@@ -40,12 +56,13 @@ GATE_PORTFOLIO = "portfolio_limit"
 
 GATE_KIND_BY_REASON: dict[str, str] = {
     "composite_below_min": GATE_SCORE,
-    "not_top_decile": GATE_SCORE,
+    "outside_candidate_pool": GATE_SCORE,
     "insufficient_data": GATE_HARD,
     "below_50dma": GATE_HARD,
     "no_technical_trigger": GATE_HARD,
     "earnings_proximity": GATE_HARD,
     "no_atr": GATE_HARD,
+    "sector_pool_cap": GATE_PORTFOLIO,
     "already_held": GATE_PORTFOLIO,
     "max_positions": GATE_PORTFOLIO,
     "sector_cap": GATE_PORTFOLIO,
@@ -55,12 +72,72 @@ GATE_KIND_BY_REASON: dict[str, str] = {
 }
 
 
+def sector_pool_cap(pool_size: int) -> int:
+    """Max names one sector may contribute to the candidate pool (at least 1)."""
+    return max(1, math.floor(MAX_SECTOR_POOL_PCT * pool_size))
+
+
+def build_candidate_pool(
+    ranked: list[tuple[str, str]], pool_size: int
+) -> tuple[set[str], set[str]]:
+    """Sector-capped top-N. ``ranked`` is [(symbol, sector)] best-ranked first.
+
+    Two passes. The first walks in rank order admitting names until the pool is full,
+    skipping any whose sector already holds its cap, so a crowded sector yields its
+    surplus slots to the next-best name elsewhere instead of colonising the pool.
+
+    The second pass matters just as much: if the cap left the pool short — few sectors
+    represented, or a genuinely narrow market — the remaining slots are refilled in rank
+    order *ignoring* the cap. Diversification is a preference between comparable
+    candidates, not a reason to shrink the opportunity set; a hard cap would quietly
+    reintroduce the over-filtering this pool is meant to avoid.
+
+    Returns (pool, capped_out). ``capped_out`` are names a sector cap displaced and the
+    top-up did not rescue, which the journal reports differently from ranking too low.
+    """
+    cap = sector_pool_cap(pool_size)
+    pool: list[str] = []
+    deferred: list[str] = []
+    per_sector: dict[str, int] = {}
+    for symbol, sector in ranked:
+        if len(pool) >= pool_size:
+            break
+        if per_sector.get(sector, 0) >= cap:
+            deferred.append(symbol)
+            continue
+        pool.append(symbol)
+        per_sector[sector] = per_sector.get(sector, 0) + 1
+
+    # Top up from the deferred names (still in rank order), then from anything left.
+    if len(pool) < pool_size:
+        seen = set(pool)
+        for symbol in [*deferred, *(s for s, _ in ranked)]:
+            if len(pool) >= pool_size:
+                break
+            if symbol not in seen:
+                pool.append(symbol)
+                seen.add(symbol)
+
+    return set(pool), {s for s in deferred if s not in pool}
+
+
+def candidate_pool_size(n_scored: int) -> int:
+    """How many top-ranked names may be considered for entry this cycle (inclusive)."""
+    if n_scored <= 0:
+        return 1
+    by_book = math.ceil(CANDIDATE_POOL_MULT * MAX_POSITIONS)
+    by_universe = math.floor(CANDIDATE_POOL_MAX_PCT * n_scored)
+    return max(1, min(by_book, by_universe))
+
+
 @dataclass(frozen=True, slots=True)
 class BuyContext:
     composite: float | None  # raw weighted mean of family percentiles (journal only)
     composite_percentile: float | None  # the gated unit — see domain/strategy.py
     rank: int | None
     rank_threshold: int  # top-decile cutoff (inclusive)
+    in_candidate_pool: bool  # survived the sector-capped top-N selection
+    sector_pool_full: bool  # excluded because its sector already filled its pool quota
     data_completeness: float
     weight_covered: float  # regime weight of the families that actually scored
     price_above_50dma: bool
@@ -123,8 +200,10 @@ def evaluate_buy(ctx: BuyContext) -> BuyEvaluation:
             "composite_below_min",
             shortfall=round(MIN_COMPOSITE_PERCENTILE - ctx.composite_percentile, 3),
         )
-    if ctx.rank is None or ctx.rank > ctx.rank_threshold:
-        return reject("not_top_decile")
+    if ctx.sector_pool_full:
+        return reject("sector_pool_cap", sector_cap=sector_pool_cap(ctx.rank_threshold))
+    if ctx.rank is None or ctx.rank > ctx.rank_threshold or not ctx.in_candidate_pool:
+        return reject("outside_candidate_pool")
     if not ctx.price_above_50dma:
         return reject("below_50dma")
     if not (ctx.fresh_breakout or ctx.macd_bullish):

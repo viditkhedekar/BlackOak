@@ -27,6 +27,7 @@ from app.db.repositories.macro import MacroRepository
 from app.db.repositories.prices import PriceRepository
 from app.db.repositories.strategy import RegimeRepository
 from app.db.repositories.trading import (
+    OrderRepository,
     PortfolioSnapshotRepository,
     PositionRepository,
     ThesisRepository,
@@ -35,7 +36,7 @@ from app.db.repositories.trading import (
 from app.domain.decision import CyclePlan, SymbolCycleData, plan_cycle
 from app.domain.factors import FundamentalSnapshot
 from app.domain.regime import DMA_LONG, build_features, classify_raw, resolve
-from app.domain.rules import PositionState
+from app.domain.rules import COMPOSITE_EXIT, PositionState
 from app.domain.signals import EstimateValues, SignalInputs, compute_signals
 from app.domain.stats import sma
 from app.domain.strategy import (
@@ -45,6 +46,7 @@ from app.domain.strategy import (
     StrategyScore,
     fuse_scores,
     score_attribution,
+    strongest_metrics,
     weakest_metrics,
 )
 from app.services.execution import place_order
@@ -57,10 +59,11 @@ log = structlog.get_logger()
 STALENESS_MAX_DAYS = 4  # halt if the latest bar is older than this
 DAILY_LOSS_HALT = -0.03  # no new entries once the day is down this much
 
-# A 500-name universe skips ~490 candidates a cycle. Names that got within this multiple
-# of the rank cutoff were genuinely in contention, so they earn a full evidence payload;
-# the rest are rolled into one summary row to keep the journal readable.
-JOURNAL_DETAIL_RANK_MULT = 2
+# A 500-name universe skips ~495 candidates a cycle. A name that made the candidate pool
+# was judged on its technicals and the book's limits, so it earns a full evidence payload.
+# Everything beyond the pool was rejected on rank alone — its reason plus a count in the
+# rollup says everything there is to say, so detailing it would only pad the journal.
+JOURNAL_DETAIL_RANK_MULT = 1
 
 
 @dataclass
@@ -116,15 +119,18 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
         if halt_reason is None:
             entries_locked = await _daily_loss_locked(session, account.equity, now)
 
-        # 5) Decide.
+        # 5) Decide. Unlike the backtester (one pass per day), the live engine runs every
+        # 30 min, so today's entry count comes from the order ledger.
+        day_start = datetime.combine(now.date(), time(0, 0), tzinfo=UTC)
+        entries_today = await OrderRepository(session).count_buys_since(day_start)
         plan = plan_cycle(
             cycle_data, positions, account.equity, account.cash, sector_notional,
-            entries_today=0, n_scored=n_scored,
+            entries_today=entries_today, n_scored=n_scored,
         )
 
         # 6) Journal BEFORE acting — including holds, skips, and the fuse block.
         rows = _decision_rows(cycle_id, now, regime_label, plan, cycle_data, halt_reason,
-                              entries_locked)
+                              entries_locked, n_scored)
         await TradeDecisionRepository(session).record_many(rows)
         await session.flush()
 
@@ -161,7 +167,10 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
         # 8) Re-reconcile so the mirror reflects the fills, then snapshot.
         await reconcile_positions(session, broker)
         account = await asyncio.to_thread(broker.get_account)
-        await _write_snapshot(session, now, account, regime_label, positions)
+        # Re-read the mirror: `positions` is the pre-trade book, so snapshotting it would
+        # report holdings the cycle has just changed.
+        final_positions, _ = await _load_positions(session, cycle_data)
+        await _write_snapshot(session, now, account, regime_label, final_positions)
 
         ctx.records_processed = buys + sells
         ctx.meta = {
@@ -311,6 +320,7 @@ def _decision_rows(
     cycle_data: dict[str, SymbolCycleData],
     halt_reason: str | None,
     entries_locked: bool,
+    n_scored: int,
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     if halt_reason is not None:
@@ -321,12 +331,16 @@ def _decision_rows(
         return rows
     for intent in plan.exits:
         a = intent.action
+        d = cycle_data.get(intent.symbol)
         rows.append({
             "cycle_id": cycle_id, "ts": now, "symbol": intent.symbol,
             "action": "sell" if a.fraction > 0 else "hold", "reason": a.reason,
             "regime": regime,
             "evidence": {"fraction": a.fraction, "exit_price": a.exit_price,
-                         "new_stop": a.new_stop},
+                         "new_stop": a.new_stop,
+                         "n_scored": n_scored,
+                         "composite_exit": COMPOSITE_EXIT,
+                         **(_score_evidence(d.score, WEIGHTS_BY_REGIME[regime]) if d else {})},
         })
     for entry in plan.entries:
         action = "blocked" if entries_locked else "buy"
@@ -340,8 +354,8 @@ def _decision_rows(
                          "composite": entry.entry_composite,
                          "composite_percentile": d.score.composite_percentile if d else None,
                          "min_composite_percentile": MIN_COMPOSITE_PERCENTILE,
-                         "rank": d.score.rank if d else None,
                          "rank_threshold": plan.rank_threshold,
+                         "n_scored": n_scored,
                          **(_score_evidence(d.score, WEIGHTS_BY_REGIME[regime]) if d else {})},
         })
     rows.extend(_skip_rows(cycle_id, now, regime, plan, cycle_data))
@@ -349,20 +363,44 @@ def _decision_rows(
 
 
 def _score_evidence(score: StrategyScore, weights: dict[str, float]) -> dict[str, object]:
-    """The scoring half of a skip explanation: families, what dragged, what was missing."""
+    """The scoring case for and against a name, whatever the verdict.
+
+    Every decision — buy, hold, sell or skip — carries the same payload, so the journal
+    can answer "what did the engine see here?" without the reader knowing in advance
+    which way it went. ``drivers`` and ``detractors`` are the two halves of the same
+    attribution and sum to ``composite - 50``.
+    """
+    contributions = score_attribution(score, weights)
     return {
+        "composite": score.composite,
+        "composite_percentile": score.composite_percentile,
+        "rank": score.rank,
+        "confidence": score.confidence,
         "families": dict(score.families),
+        "drivers": [
+            {"family": c.family, "score": c.score, "weight": c.weight,
+             "contribution": c.contribution}
+            for c in reversed(contributions)
+            if c.contribution > 0
+        ],
         "detractors": [
             {"family": c.family, "score": c.score, "weight": c.weight,
              "contribution": c.contribution}
-            for c in score_attribution(score, weights)
+            for c in contributions
             if c.contribution < 0
+        ],
+        "strongest_metrics": [
+            {"metric": m, "score": s} for m, s in strongest_metrics(score)
         ],
         "weakest_metrics": [
             {"metric": m, "score": s} for m, s in weakest_metrics(score)
         ],
         "metrics_present": score.metrics_present,
         "metrics_applicable": score.metrics_applicable,
+        "families_unscored": [f for f, s in score.families.items() if s is None],
+        # Imputed families are scored at the sector median rather than observed; a reader
+        # judging the thesis needs to know which parts of it were filled in.
+        "imputed_families": list(score.imputed_families),
     }
 
 
