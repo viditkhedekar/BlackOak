@@ -1,8 +1,14 @@
 """Integration fixtures: a real Postgres session.
 
-Self-provisions the schema via metadata.create_all so it doesn't depend on the
-migration step's ordering, and skips the whole module if no database is reachable
-(so a laptop without Postgres still gets a green unit-test run).
+Self-provisions any missing tables via metadata.create_all (so a developer who has only
+run `docker compose up` still gets a usable schema), and skips the whole module if no
+database is reachable (so a laptop without Postgres still gets a green unit-test run).
+
+create_all is checkfirst, so it is a no-op against an already-migrated database — but it
+never stamps alembic_version. Anything that runs `alembic upgrade head` on the same
+database must therefore migrate BEFORE these tests touch it, or Alembic starts from base
+against a fully-populated schema and fails on 0001 with `relation "users" already
+exists`. That is why .github/workflows/ci.yml runs the migration steps ahead of pytest.
 """
 
 from collections.abc import AsyncIterator

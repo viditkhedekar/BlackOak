@@ -35,13 +35,20 @@ jobs:
         run: uv run ruff check .
       - name: Type check
         run: uv run mypy
-      - name: Tests
-        run: uv run pytest -q
+      # Migrations run BEFORE the tests, against the still-empty CI database. The
+      # integration fixtures provision their schema with Base.metadata.create_all, which
+      # builds every table but never stamps alembic_version — so with the tests first,
+      # `alembic upgrade head` would start from base against an already-populated database
+      # and die on 0001 with `relation "users" already exists`. Migrating first also makes
+      # this step a genuine from-scratch check and lets the tests exercise the real
+      # migrated schema (create_all then finds every table present and is a no-op).
       - name: Migrations apply cleanly
         run: uv run alembic upgrade head
       - name: No model changes missing a migration
         run: |
           uv run alembic check
+      - name: Tests
+        run: uv run pytest -q
   frontend:
     runs-on: ubuntu-latest
     defaults:
