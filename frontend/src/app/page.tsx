@@ -1,8 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { EquityCurve } from "@/components/charts/EquityCurve";
+import { NextCycleTimer } from "@/components/features/NextCycleTimer";
 import { RegimeBadge } from "@/components/features/RegimeBadge";
-import { useDecisions, usePortfolio, useRegime } from "@/lib/hooks/useCompanies";
+import {
+  useDecisions,
+  usePerformance,
+  usePortfolio,
+  useRegime,
+  useSchedule,
+} from "@/lib/hooks/useCompanies";
 import { scoreColor, scoreText } from "@/lib/scoreColor";
 
 const ACTION_COLOR: Record<string, string> = {
@@ -24,6 +32,8 @@ export default function CommandCenter() {
   const regime = useRegime();
   const portfolio = usePortfolio();
   const decisions = useDecisions();
+  const performance = usePerformance();
+  const schedule = useSchedule();
 
   const flags = (regime.data?.features?.flags ?? {}) as Record<string, boolean>;
   const bearish = Object.entries(flags).filter(([, v]) => v).map(([k]) => k);
@@ -43,7 +53,7 @@ export default function CommandCenter() {
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Stat
           label="Equity"
           value={equity != null ? `$${equity.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
@@ -59,6 +69,32 @@ export default function CommandCenter() {
           value={bearish.length ? `${bearish.length} bearish` : "clear"}
           sub={bearish.join(", ") || "no bearish flags"}
         />
+        {schedule.data ? (
+          <NextCycleTimer data={schedule.data} dataUpdatedAt={schedule.dataUpdatedAt} />
+        ) : (
+          <Stat label="Next trades" value="—" sub="loading schedule…" />
+        )}
+      </div>
+
+      <div className="mb-6 rounded-lg border border-line bg-surface">
+        {performance.isLoading ? (
+          <p className="px-4 py-10 text-sm text-muted">Loading equity curve…</p>
+        ) : performance.isError ? (
+          <p className="px-4 py-10 text-sm text-negative">Failed to load performance.</p>
+        ) : (performance.data?.points.length ?? 0) > 0 ? (
+          <EquityCurve data={performance.data!} />
+        ) : (
+          <div className="px-4 py-10">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
+              Portfolio value
+            </div>
+            <p className="mt-2 text-sm text-muted">
+              No equity history yet — a snapshot is written once per decision cycle. Run{" "}
+              <code className="font-mono text-accent">uv run python -m app.cli cycle</code> to
+              record the first point; the curve builds out from there.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
