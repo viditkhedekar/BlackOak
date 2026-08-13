@@ -52,6 +52,7 @@ from app.domain.strategy import (
 from app.services.execution import place_order
 from app.services.job_tracking import track_job
 from app.services.ports import BrokerClient
+from app.services.position_adoption import adopt_orphan_positions
 from app.services.reconciliation import reconcile_positions
 
 log = structlog.get_logger()
@@ -107,19 +108,23 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
         # 2) Build the universe snapshot (same signals + regime + fusion as the backtester).
         cycle_data, regime_label, _weights, n_scored, latest_date = await _build_snapshot(session)
 
-        # 3) Broker account + open positions (with their entry theses).
+        # 3) Bring any un-thesised holding under management, or it can never be sold and
+        # its notional never counts against the sector caps.
+        adoption = await adopt_orphan_positions(session, cycle_data)
+
+        # 4) Broker account + open positions (with their entry theses).
         import asyncio
 
         account = await asyncio.to_thread(broker.get_account)
         positions, sector_notional = await _load_positions(session, cycle_data)
 
-        # 4) Fuses.
+        # 5) Fuses.
         halt_reason = _fuse_check(latest_date, now.date())
         entries_locked = False
         if halt_reason is None:
             entries_locked = await _daily_loss_locked(session, account.equity, now)
 
-        # 5) Decide. Unlike the backtester (one pass per day), the live engine runs every
+        # 6) Decide. Unlike the backtester (one pass per day), the live engine runs every
         # 30 min, so today's entry count comes from the order ledger.
         day_start = datetime.combine(now.date(), time(0, 0), tzinfo=UTC)
         entries_today = await OrderRepository(session).count_buys_since(day_start)
@@ -128,7 +133,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
             entries_today=entries_today, n_scored=n_scored,
         )
 
-        # 6) Journal BEFORE acting — including holds, skips, and the fuse block.
+        # 7) Journal BEFORE acting — including holds, skips, and the fuse block.
         rows = _decision_rows(cycle_id, now, regime_label, plan, cycle_data, halt_reason,
                               entries_locked, n_scored)
         await TradeDecisionRepository(session).record_many(rows)
@@ -144,7 +149,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
             return CycleReport(cycle_id, regime_label, n_scored, 0, 0, holds, skips,
                               True, halt_reason)
 
-        # 7) Execute exits first (free cash), then entries (unless locked).
+        # 8) Execute exits first (free cash), then entries (unless locked).
         thesis_repo = ThesisRepository(session)
         for intent in plan.exits:
             if intent.action.fraction > 0:
@@ -161,7 +166,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
                 await thesis_repo.upsert(_thesis_row(entry))
                 buys += 1
 
-        # 8) Re-reconcile so the mirror reflects the fills, then snapshot.
+        # 9) Re-reconcile so the mirror reflects the fills, then snapshot.
         await reconcile_positions(session, broker)
         account = await asyncio.to_thread(broker.get_account)
         # Re-read the mirror: `positions` is the pre-trade book, so snapshotting it would
@@ -173,6 +178,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
         ctx.meta = {
             "cycle_id": str(cycle_id), "regime": regime_label,
             "buys": buys, "sells": sells, "holds": holds, "skips": skips,
+            "adopted": adoption.adopted, "unmanageable": adoption.unmanageable,
         }
         return CycleReport(cycle_id, regime_label, n_scored, buys, sells, holds, skips,
                           False, None)
@@ -277,7 +283,9 @@ async def _load_positions(
     for mirror in await PositionRepository(session).all():
         t = theses.get(mirror.symbol)
         if t is None:
-            continue  # broker holds it but we have no thesis — reconcile will surface it
+            # adopt_orphan_positions runs first, so the only survivors here are holdings
+            # with no ATR to price a stop from. Still unmanageable, but now reported.
+            continue
         positions[mirror.symbol] = PositionState(
             symbol=mirror.symbol, entry_price=float(t.entry_price), shares=float(mirror.shares),
             atr_at_entry=float(t.atr_at_entry), stop_price=float(t.stop_price),
