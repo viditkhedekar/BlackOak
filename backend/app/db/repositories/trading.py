@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +15,7 @@ from app.db.models import (
     PositionThesis,
     TradeDecision,
 )
+from app.domain.broker import TERMINAL
 
 
 class OrderRepository:
@@ -33,6 +34,22 @@ class OrderRepository:
         )
         return result.scalar_one_or_none()
 
+    async def open_orders(self) -> list[Order]:
+        """Orders the broker may still act on — anything not in a terminal state."""
+        result = await self._session.execute(
+            select(Order).where(Order.status.notin_(tuple(TERMINAL)))
+        )
+        return list(result.scalars().all())
+
+    async def update_status(
+        self, order_id: uuid.UUID, status: str, reject_reason: str | None
+    ) -> None:
+        await self._session.execute(
+            update(Order)
+            .where(Order.id == order_id)
+            .values(status=status, reject_reason=reject_reason)
+        )
+
     async def count_buys_since(self, since: datetime) -> int:
         """Entries already placed today — the live engine runs many cycles a day, so the
         daily entry cap has to be counted from the ledger, not from one cycle's plan."""
@@ -50,6 +67,13 @@ class ExecutionRepository:
 
     async def record(self, row: dict[str, object]) -> None:
         self._session.add(Execution(**row))
+
+    async def exists_for_order(self, order_id: uuid.UUID) -> bool:
+        """Guard against re-recording a fill each time the poller revisits an order."""
+        result = await self._session.execute(
+            select(func.count()).select_from(Execution).where(Execution.order_id == order_id)
+        )
+        return int(result.scalar_one()) > 0
 
 
 class PositionRepository:
