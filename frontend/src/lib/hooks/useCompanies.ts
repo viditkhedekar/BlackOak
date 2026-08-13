@@ -33,6 +33,9 @@ export function usePortfolio() {
 export function usePerformance() {
   return useQuery({ queryKey: ["performance"], queryFn: () => api.performance(), ...LIVE });
 }
+export function useSchedule() {
+  return useQuery({ queryKey: ["schedule"], queryFn: () => api.schedule(), ...LIVE });
+}
 export function useBacktests() {
   return useQuery({ queryKey: ["backtests"], queryFn: () => api.backtests() });
 }
