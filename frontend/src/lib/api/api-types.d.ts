@@ -174,6 +174,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Schedule
+         * @description When the next decision cycle runs, and whether a worker is alive to run it.
+         */
+        get: operations["schedule_api_v1_schedule_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/performance": {
         parameters: {
             query?: never;
@@ -591,6 +611,8 @@ export interface components {
             sector: string | null;
             /** Composite */
             composite: number | null;
+            /** Composite Percentile */
+            composite_percentile?: number | null;
             families: components["schemas"]["StrategyFamilies"];
             /** Data Completeness */
             data_completeness: number;
@@ -622,6 +644,29 @@ export interface components {
             weights: {
                 [key: string]: unknown;
             } | null;
+        };
+        /**
+         * ScheduleResponse
+         * @description Next decision cycle, plus whether a worker is actually around to run it.
+         */
+        ScheduleResponse: {
+            /** Next Cycle At */
+            next_cycle_at: string | null;
+            /** Interval Minutes */
+            interval_minutes: number;
+            /** Cycle Window Et */
+            cycle_window_et: string;
+            /**
+             * Server Time
+             * Format: date-time
+             */
+            server_time: string;
+            /** Worker Last Seen */
+            worker_last_seen: string | null;
+            /** Worker Running */
+            worker_running: boolean;
+            /** Market Hours */
+            market_hours: boolean;
         };
         /** ScreenerResponse */
         ScreenerResponse: {
@@ -984,6 +1029,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PortfolioResponse"];
+                };
+            };
+        };
+    };
+    schedule_api_v1_schedule_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleResponse"];
                 };
             };
         };
