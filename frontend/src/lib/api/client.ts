@@ -23,6 +23,7 @@ export type RegimeResponse = JSON200<"/api/v1/strategy/regime", "get">;
 export type DecisionRow = JSON200<"/api/v1/strategy/decisions", "get">[number];
 export type PortfolioResponse = JSON200<"/api/v1/portfolio", "get">;
 export type PerformanceResponse = JSON200<"/api/v1/performance", "get">;
+export type ScheduleResponse = JSON200<"/api/v1/schedule", "get">;
 export type BacktestSummary = JSON200<"/api/v1/backtests", "get">[number];
 export type BacktestDetail = JSON200<"/api/v1/backtests/{run_id}", "get">;
 export type SystemHealth = JSON200<"/api/v1/system/health", "get">;
@@ -80,6 +81,7 @@ export const api = {
   },
   portfolio: () => get<PortfolioResponse>("/api/v1/portfolio"),
   performance: () => get<PerformanceResponse>("/api/v1/performance"),
+  schedule: () => get<ScheduleResponse>("/api/v1/schedule"),
   backtests: () => get<BacktestSummary[]>("/api/v1/backtests"),
   backtest: (id: string) => get<BacktestDetail>(`/api/v1/backtests/${id}`),
   systemHealth: () => get<SystemHealth>("/api/v1/system/health"),
