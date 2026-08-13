@@ -132,3 +132,17 @@ class FeedFreshness(BaseModel):
 class SystemHealthResponse(BaseModel):
     jobs: list[JobRunRow]
     feeds: list[FeedFreshness]
+
+
+class ScheduleResponse(BaseModel):
+    """Next decision cycle, plus whether a worker is actually around to run it."""
+
+    next_cycle_at: datetime | None
+    interval_minutes: int
+    cycle_window_et: str
+    server_time: datetime  # so the client counts down against the API's clock, not its own
+    worker_last_seen: datetime | None
+    # Only meaningful while `market_hours` is true: the 15-min intraday poll is the
+    # heartbeat, and nothing beats outside the session, so staleness proves nothing then.
+    worker_running: bool
+    market_hours: bool
