@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_secret_key: str = ""
 
+    # How often the worker runs a decision cycle during regular trading hours. Must divide
+    # 60 evenly (60 = hourly, 30 = ADR-0007's original cadence, 15 = every quarter hour).
+    cycle_interval_minutes: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
