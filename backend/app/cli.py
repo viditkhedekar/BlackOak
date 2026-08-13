@@ -164,6 +164,25 @@ async def _reconcile() -> None:
     log.info("cli.reconcile.done", report=report)
 
 
+async def _sync_orders() -> None:
+    """Advance open orders from broker truth and record any fills that landed late."""
+    from app.services.order_sync import sync_open_orders
+
+    settings = get_settings()
+    broker = get_broker(settings)
+    factory = get_session_factory()
+    async with factory() as session:
+        report = await sync_open_orders(session, broker)
+        await session.commit()
+    log.info(
+        "cli.sync_orders.done",
+        checked=report.checked,
+        advanced=report.advanced,
+        filled=report.filled,
+        missing=report.missing,
+    )
+
+
 async def _backtest(start: str, end: str, cash: float) -> None:
     from datetime import date
 
@@ -276,6 +295,8 @@ def main() -> None:
 
     sub.add_parser("reconcile", help="Re-sync the local position mirror from the broker")
 
+    sub.add_parser("sync-orders", help="Advance open orders and record late fills")
+
     sub.add_parser("refresh", help="Run the daily price refresh + rescore now")
 
     ric = sub.add_parser("rank-ic", help="Measure ranking quality: rank IC + decile spread")
@@ -310,6 +331,8 @@ def main() -> None:
         asyncio.run(_cycle())
     elif args.command == "reconcile":
         asyncio.run(_reconcile())
+    elif args.command == "sync-orders":
+        asyncio.run(_sync_orders())
     elif args.command == "refresh":
         asyncio.run(_refresh())
     elif args.command == "rank-ic":
