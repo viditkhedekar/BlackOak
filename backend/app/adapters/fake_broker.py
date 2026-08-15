@@ -6,11 +6,14 @@ without a network."""
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from app.domain.broker import (
     FILLED,
     BrokerAccount,
     BrokerOrder,
     BrokerPosition,
+    PortfolioHistoryPoint,
 )
 
 
@@ -22,9 +25,24 @@ class FakeBroker:
         self._positions: dict[str, BrokerPosition] = {}
         self._orders: dict[str, BrokerOrder] = {}
         self._prices: dict[str, float] = {}
+        self._history: list[PortfolioHistoryPoint] = []
 
     def set_price(self, symbol: str, price: float) -> None:
         self._prices[symbol] = price
+
+    def set_position(self, symbol: str, qty: float, avg_entry_price: float) -> None:
+        """Seed a holding directly, for exercising exits without a matching buy."""
+        self._positions[symbol] = BrokerPosition(
+            symbol, qty, avg_entry_price, qty * self._prices.get(symbol, avg_entry_price)
+        )
+
+    def set_history(self, points: list[tuple[datetime, float]]) -> None:
+        self._history = [PortfolioHistoryPoint(ts=ts, equity=eq) for ts, eq in points]
+
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1H"
+    ) -> list[PortfolioHistoryPoint]:
+        return list(self._history)
 
     def get_account(self) -> BrokerAccount:
         holdings = sum(
@@ -55,8 +73,16 @@ class FakeBroker:
                 avg = (existing.qty * existing.avg_entry_price + qty * price) / total
                 self._positions[symbol] = BrokerPosition(symbol, total, avg, total * price)
         else:  # sell
-            self._cash += qty * price
             existing = self._positions.get(symbol)
+            # Alpaca rejects a sell for more than the account holds, and the rounding that
+            # causes it is invisible unless the fake refuses too.
+            held = existing.qty if existing else 0.0
+            if qty > held:
+                raise ValueError(
+                    f"insufficient qty available for order "
+                    f"(requested: {qty}, available: {held})"
+                )
+            self._cash += qty * price
             if existing is not None:
                 remaining = existing.qty - qty
                 if remaining <= 1e-9:
