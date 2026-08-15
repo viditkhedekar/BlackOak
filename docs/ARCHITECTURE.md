@@ -180,6 +180,32 @@ All agents: Claude API, temperature 0, structured output via tool schema → Pyd
 | 02:00 daily | Fundamentals slice, news ingest, rescore universe, refresh stale/changed AI theses |
 | Sunday 18:00 | Universe maintenance, data-quality audit, weekly rebalance proposal + narrative, summary email, DB backup |
 
+### Equity-curve snapshots
+
+`portfolio_snapshots` is written by three paths, tagged in its `source` column. The curve
+was previously fed only by the decision cycle, which made it hostage to that job: a
+rejected order raised before the write and cost the run its point entirely, and a worker
+that was down over a session left no marks at all.
+
+| `source` | Written by | Carries |
+|---|---|---|
+| `cycle` | The decision cycle, in a `finally` so a failed run still marks where equity stood | equity, cash, positions, regime, holdings |
+| `poll` | The 15-minute intraday poll — equity moves with the market, not only with trades | equity, cash, positions, regime, holdings |
+| `backfill` | `cli backfill-equity`, reading the broker's own account history | equity only |
+
+Only equity is knowable for every source, so the rest are nullable rather than filled with
+plausible-looking zeros. `PortfolioSnapshotRepository.latest()` (which the dashboard reads
+for cash and regime) skips `backfill` rows for that reason; the performance endpoint uses
+all of them.
+
+Backfill is gap-fill only and idempotent — a timestamp that already has a live row keeps
+it. Alpaca constrains timeframe by period (a period over 30 days must use `1D`):
+
+```
+uv run python -m app.cli backfill-equity --period 1M --timeframe 1D
+uv run python -m app.cli backfill-equity --period 1W --timeframe 15Min
+```
+
 ---
 
 ## 14. API Surface (REST, `/api/v1`, OpenAPI → generated TS client)
