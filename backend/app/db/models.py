@@ -441,14 +441,21 @@ class TradeDecision(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 
 class PortfolioSnapshot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """EOD (and intraday) portfolio state → performance math."""
+    """EOD (and intraday) portfolio state → performance math.
+
+    Written from three places, distinguished by ``source``: the decision cycle
+    ("cycle"), the 15-minute intraday poll ("poll"), and a one-off reconstruction from
+    the broker's portfolio history ("backfill"). Only equity is known for every source,
+    so the rest are nullable rather than filled with plausible-looking zeros.
+    """
 
     __tablename__ = "portfolio_snapshots"
     __table_args__ = (UniqueConstraint("ts", name="uq_portfolio_snapshot_ts"),)
 
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     equity: Mapped[Decimal] = mapped_column(Money)
-    cash: Mapped[Decimal] = mapped_column(Money)
-    positions: Mapped[int] = mapped_column(Integer)
-    regime: Mapped[str] = mapped_column(String(16))
+    cash: Mapped[Decimal | None] = mapped_column(Money, nullable=True)
+    positions: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    regime: Mapped[str | None] = mapped_column(String(16), nullable=True)
     holdings: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(String(16), server_default="cycle")
