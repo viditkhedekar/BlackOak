@@ -11,6 +11,7 @@ rather than creating a second.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -25,6 +26,7 @@ from app.domain.broker import (
     BrokerAccount,
     BrokerOrder,
     BrokerPosition,
+    PortfolioHistoryPoint,
 )
 
 log = structlog.get_logger()
@@ -82,6 +84,31 @@ class AlpacaPaperBroker:
                     market_value=float(p.market_value or 0),
                 )
             )
+        return out
+
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1H"
+    ) -> list[PortfolioHistoryPoint]:
+        from alpaca.trading.requests import GetPortfolioHistoryRequest
+
+        history: Any = self._client.get_portfolio_history(
+            GetPortfolioHistoryRequest(period=period, timeframe=timeframe)
+        )
+        stamps: list[Any] = list(getattr(history, "timestamp", None) or [])
+        equities: list[Any] = list(getattr(history, "equity", None) or [])
+
+        out: list[PortfolioHistoryPoint] = []
+        for stamp, equity in zip(stamps, equities, strict=False):
+            # Alpaca emits a null equity for marks before the account was funded, and a
+            # zero would read as a total wipeout on the curve rather than as "no data".
+            if stamp is None or equity is None or float(equity) <= 0:
+                continue
+            out.append(
+                PortfolioHistoryPoint(
+                    ts=datetime.fromtimestamp(int(stamp), tz=UTC), equity=float(equity)
+                )
+            )
+        out.sort(key=lambda p: p.ts)
         return out
 
     def submit_order(
