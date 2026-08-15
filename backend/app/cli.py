@@ -183,6 +183,24 @@ async def _sync_orders() -> None:
     )
 
 
+async def _backfill_equity(period: str, timeframe: str) -> None:
+    """Seed the equity curve from the broker's own account history.
+
+    For stretches where nothing of ours was running (worker down, cycle rejected mid-run),
+    the broker still recorded what the account was worth. Gap-fill only: a timestamp that
+    already has a live snapshot keeps it.
+    """
+    from app.services.snapshots import backfill_equity
+
+    settings = get_settings()
+    broker = get_broker(settings)
+    factory = get_session_factory()
+    async with factory() as session:
+        inserted = await backfill_equity(session, broker, period, timeframe)
+        await session.commit()
+    log.info("cli.backfill_equity.done", inserted=inserted)
+
+
 async def _backtest(start: str, end: str, cash: float) -> None:
     from datetime import date
 
@@ -299,6 +317,10 @@ def main() -> None:
 
     sub.add_parser("refresh", help="Run the daily price refresh + rescore now")
 
+    bfe = sub.add_parser("backfill-equity", help="Seed the equity curve from broker history")
+    bfe.add_argument("--period", type=str, default="1M", help="1D|1W|1M|3M|1A")
+    bfe.add_argument("--timeframe", type=str, default="1H", help="1Min|5Min|15Min|1H|1D")
+
     ric = sub.add_parser("rank-ic", help="Measure ranking quality: rank IC + decile spread")
     ric.add_argument("--start", type=str, required=True, help="YYYY-MM-DD")
     ric.add_argument("--end", type=str, required=True, help="YYYY-MM-DD")
@@ -335,6 +357,8 @@ def main() -> None:
         asyncio.run(_sync_orders())
     elif args.command == "refresh":
         asyncio.run(_refresh())
+    elif args.command == "backfill-equity":
+        asyncio.run(_backfill_equity(args.period, args.timeframe))
     elif args.command == "rank-ic":
         asyncio.run(_rank_ic(args.start, args.end, args.horizon, args.step))
     elif args.command == "backtest":
