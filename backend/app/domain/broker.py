@@ -7,6 +7,7 @@ vendor's strings.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 # Normalised order lifecycle.
 SUBMITTED = "submitted"
@@ -33,6 +34,18 @@ class BrokerPosition:
     qty: float
     avg_entry_price: float
     market_value: float
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioHistoryPoint:
+    """One equity mark from the broker's own account history.
+
+    Equity only: the history endpoint reports what the account was worth at a moment, not
+    how that value was split between cash and holdings.
+    """
+
+    ts: datetime
+    equity: float
 
 
 @dataclass(frozen=True, slots=True)
