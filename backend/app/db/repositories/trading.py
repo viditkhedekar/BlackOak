@@ -187,8 +187,10 @@ class PortfolioSnapshotRepository:
             return 0
         stmt = pg_insert(PortfolioSnapshot).values(rows)
         stmt = stmt.on_conflict_do_nothing(index_elements=[PortfolioSnapshot.ts])
-        result = await self._session.execute(stmt)
-        return result.rowcount or 0
+        # RETURNING rather than rowcount: the count is what tells the caller how much of a
+        # gap the backfill actually filled, and rowcount is untyped on the async Result.
+        inserted = await self._session.execute(stmt.returning(PortfolioSnapshot.ts))
+        return len(inserted.all())
 
     async def latest_before(self, ts: datetime) -> PortfolioSnapshot | None:
         result = await self._session.execute(
