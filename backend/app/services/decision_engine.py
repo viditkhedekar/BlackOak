@@ -54,6 +54,7 @@ from app.services.job_tracking import track_job
 from app.services.ports import BrokerClient
 from app.services.position_adoption import adopt_orphan_positions
 from app.services.reconciliation import reconcile_positions
+from app.services.snapshots import CYCLE
 
 log = structlog.get_logger()
 
@@ -151,28 +152,54 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
 
         # 8) Execute exits first (free cash), then entries (unless locked).
         thesis_repo = ThesisRepository(session)
-        for intent in plan.exits:
-            if intent.action.fraction > 0:
-                await place_order(session, broker, cycle_id, intent.symbol, "sell",
-                                  positions[intent.symbol].shares * intent.action.fraction,
-                                  intent.action.reason)
-                sells += 1
-            await _persist_exit_state(thesis_repo, intent)
+        # Sell sizes come from broker truth, not the mirror. `positions.shares` is
+        # Numeric(18,6) and a fractional holding rounds UP into it (28.156361547 becomes
+        # 28.156362), so a full exit sized off the mirror asks for more than the account
+        # holds and the broker rejects the order.
+        live_qty = {p.symbol: p.qty for p in await asyncio.to_thread(broker.list_positions)}
+        # Snapshot the pre-trade book unless the cycle gets far enough to re-read it.
+        snapshot_positions = positions
 
-        if not entries_locked:
-            for entry in plan.entries:
-                await place_order(session, broker, cycle_id, entry.symbol, "buy",
-                                  entry.shares, "entry")
-                await thesis_repo.upsert(_thesis_row(entry))
-                buys += 1
+        try:
+            for intent in plan.exits:
+                if intent.action.fraction > 0:
+                    held = live_qty.get(intent.symbol, positions[intent.symbol].shares)
+                    qty = (
+                        held if intent.action.fraction >= 1.0
+                        else held * intent.action.fraction
+                    )
+                    await place_order(session, broker, cycle_id, intent.symbol, "sell",
+                                      qty, intent.action.reason)
+                    sells += 1
+                await _persist_exit_state(thesis_repo, intent)
 
-        # 9) Re-reconcile so the mirror reflects the fills, then snapshot.
-        await reconcile_positions(session, broker)
-        account = await asyncio.to_thread(broker.get_account)
-        # Re-read the mirror: `positions` is the pre-trade book, so snapshotting it would
-        # report holdings the cycle has just changed.
-        final_positions, _ = await _load_positions(session, cycle_data)
-        await _write_snapshot(session, now, account, regime_label, final_positions)
+            if not entries_locked:
+                for entry in plan.entries:
+                    await place_order(session, broker, cycle_id, entry.symbol, "buy",
+                                      entry.shares, "entry")
+                    await thesis_repo.upsert(_thesis_row(entry))
+                    buys += 1
+
+            # 9) Re-reconcile so the mirror reflects the fills, then snapshot.
+            await reconcile_positions(session, broker)
+            # Re-read the mirror: `positions` is the pre-trade book, so snapshotting it
+            # would report holdings the cycle has just changed.
+            snapshot_positions, _ = await _load_positions(session, cycle_data)
+        finally:
+            # The equity curve gets its point whether or not the cycle finished. A run that
+            # dies mid-execution still moved real money, and a missing point reads as
+            # "nothing happened" rather than "this run failed". track_job commits on the
+            # failure path, so a write made here still lands.
+            try:
+                account = await asyncio.to_thread(broker.get_account)
+            except Exception:  # keep the pre-trade equity rather than no point at all
+                log.warning("cycle.account_refetch_failed", cycle_id=str(cycle_id))
+            try:
+                await _write_snapshot(
+                    session, now, account, regime_label, snapshot_positions
+                )
+            except Exception:  # never mask the failure that brought us here
+                log.exception("cycle.snapshot_failed", cycle_id=str(cycle_id))
 
         ctx.records_processed = buys + sells
         ctx.meta = {
@@ -506,4 +533,5 @@ async def _write_snapshot(session, now, account, regime, positions) -> None:  # 
         "ts": now, "equity": account.equity, "cash": account.cash,
         "positions": len(positions), "regime": regime,
         "holdings": {sym: p.shares for sym, p in positions.items()},
+        "source": CYCLE,
     })
