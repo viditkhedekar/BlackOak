@@ -105,11 +105,14 @@ async def schedule(session: SessionDep) -> ScheduleResponse:
 
 @router.get("/performance", response_model=PerformanceResponse)
 async def performance(session: SessionDep) -> PerformanceResponse:
-    snaps = await PortfolioSnapshotRepository(session).series(limit=500)
+    # Snapshots now land every 15 min during RTH (~26/day), so 500 was under three weeks
+    # of curve. The limit takes the *newest* rows, which would also quietly re-base
+    # total_return onto the window start rather than the true first point.
+    snaps = await PortfolioSnapshotRepository(session).series(limit=5000)
     points = [
         EquityPoint(
-            ts=s.ts, equity=float(s.equity), cash=float(s.cash),
-            regime=s.regime, positions=s.positions,
+            ts=s.ts, equity=float(s.equity), cash=_num(s.cash),
+            regime=s.regime, positions=s.positions, source=s.source,
         )
         for s in snaps
     ]
