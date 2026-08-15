@@ -152,10 +152,7 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
 
         # 8) Execute exits first (free cash), then entries (unless locked).
         thesis_repo = ThesisRepository(session)
-        # Sell sizes come from broker truth, not the mirror. `positions.shares` is
-        # Numeric(18,6) and a fractional holding rounds UP into it (28.156361547 becomes
-        # 28.156362), so a full exit sized off the mirror asks for more than the account
-        # holds and the broker rejects the order.
+        # Sell sizes come from broker truth, not the mirror — see _exit_qty.
         live_qty = {p.symbol: p.qty for p in await asyncio.to_thread(broker.list_positions)}
         # Snapshot the pre-trade book unless the cycle gets far enough to re-read it.
         snapshot_positions = positions
@@ -163,10 +160,9 @@ async def run_decision_cycle(session: AsyncSession, broker: BrokerClient) -> Cyc
         try:
             for intent in plan.exits:
                 if intent.action.fraction > 0:
-                    held = live_qty.get(intent.symbol, positions[intent.symbol].shares)
-                    qty = (
-                        held if intent.action.fraction >= 1.0
-                        else held * intent.action.fraction
+                    qty = _exit_qty(
+                        live_qty.get(intent.symbol), positions[intent.symbol].shares,
+                        intent.action.fraction,
                     )
                     await place_order(session, broker, cycle_id, intent.symbol, "sell",
                                       qty, intent.action.reason)
@@ -496,6 +492,19 @@ def _thesis_row(entry) -> dict[str, object]:  # type: ignore[no-untyped-def]
         "entry_fundamentals_score": entry.entry_fundamentals_score,
         "took_partial": False, "highest_close": entry.ref_price, "reversal_days": 0,
     }
+
+
+def _exit_qty(live_shares: float | None, mirror_shares: float, fraction: float) -> float:
+    """Shares to sell for one exit intent.
+
+    A full exit sells exactly what the broker reports, never a derived number. The mirror
+    stores shares as Numeric(18,6) and rounds a fractional holding UP into it
+    (28.156361547 becomes 28.156362), so a mirror-sized liquidation asks for more than the
+    account holds and the broker rejects the whole order. The mirror is only the fallback
+    for a symbol the broker did not return.
+    """
+    held = live_shares if live_shares is not None else mirror_shares
+    return held if fraction >= 1.0 else held * fraction
 
 
 async def _persist_exit_state(thesis_repo, intent) -> None:  # type: ignore[no-untyped-def]
