@@ -89,9 +89,12 @@ export default function CommandCenter() {
               Portfolio value
             </div>
             <p className="mt-2 text-sm text-muted">
-              No equity history yet — a snapshot is written once per decision cycle. Run{" "}
-              <code className="font-mono text-accent">uv run python -m app.cli cycle</code> to
-              record the first point; the curve builds out from there.
+              No equity history yet — the worker marks equity every 15 minutes during the
+              session. Run{" "}
+              <code className="font-mono text-accent">
+                uv run python -m app.cli backfill-equity
+              </code>{" "}
+              to seed the curve from the broker&apos;s own account history.
             </p>
           </div>
         )}
