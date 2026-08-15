@@ -70,9 +70,12 @@ class PortfolioResponse(BaseModel):
 class EquityPoint(BaseModel):
     ts: datetime
     equity: float
-    cash: float
-    regime: str
-    positions: int
+    # Equity is the only field every snapshot source knows; a point reconstructed from
+    # broker history has no cash, regime or position count behind it.
+    cash: float | None
+    regime: str | None
+    positions: int | None
+    source: str
 
 
 class PerformanceResponse(BaseModel):
