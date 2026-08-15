@@ -473,11 +473,13 @@ export interface components {
             /** Equity */
             equity: number;
             /** Cash */
-            cash: number;
+            cash: number | null;
             /** Regime */
-            regime: string;
+            regime: string | null;
             /** Positions */
-            positions: number;
+            positions: number | null;
+            /** Source */
+            source: string;
         };
         /** FactorBreakdownItem */
         FactorBreakdownItem: {
