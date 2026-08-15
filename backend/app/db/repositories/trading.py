@@ -172,10 +172,23 @@ class PortfolioSnapshotRepository:
             set_={
                 "equity": stmt.excluded.equity, "cash": stmt.excluded.cash,
                 "positions": stmt.excluded.positions, "regime": stmt.excluded.regime,
-                "holdings": stmt.excluded.holdings,
+                "holdings": stmt.excluded.holdings, "source": stmt.excluded.source,
             },
         )
         await self._session.execute(stmt)
+
+    async def insert_missing(self, rows: list[dict[str, object]]) -> int:
+        """Insert only the timestamps that have no snapshot yet.
+
+        The backfill knows equity and nothing else, so it must never overwrite a live row
+        that carries cash, positions and regime. Returns the number actually inserted.
+        """
+        if not rows:
+            return 0
+        stmt = pg_insert(PortfolioSnapshot).values(rows)
+        stmt = stmt.on_conflict_do_nothing(index_elements=[PortfolioSnapshot.ts])
+        result = await self._session.execute(stmt)
+        return result.rowcount or 0
 
     async def latest_before(self, ts: datetime) -> PortfolioSnapshot | None:
         result = await self._session.execute(
@@ -193,7 +206,15 @@ class PortfolioSnapshotRepository:
         return list(reversed(result.scalars().all()))
 
     async def latest(self) -> PortfolioSnapshot | None:
+        """Newest row that was observed live.
+
+        Backfilled rows carry equity only, so letting one be "latest" would blank the
+        cash and regime the dashboard reads off it.
+        """
         result = await self._session.execute(
-            select(PortfolioSnapshot).order_by(PortfolioSnapshot.ts.desc()).limit(1)
+            select(PortfolioSnapshot)
+            .where(PortfolioSnapshot.source != "backfill")
+            .order_by(PortfolioSnapshot.ts.desc())
+            .limit(1)
         )
         return result.scalar_one_or_none()
