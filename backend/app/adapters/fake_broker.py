@@ -6,6 +6,7 @@ without a network."""
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from app.domain.broker import (
@@ -26,6 +27,7 @@ class FakeBroker:
         self._orders: dict[str, BrokerOrder] = {}
         self._prices: dict[str, float] = {}
         self._history: list[PortfolioHistoryPoint] = []
+        self._run_id = uuid.uuid4().hex[:8]
 
     def set_price(self, symbol: str, price: float) -> None:
         self._prices[symbol] = price
@@ -94,7 +96,9 @@ class FakeBroker:
 
         order = BrokerOrder(
             client_order_id=client_order_id,
-            broker_order_id=f"fake-{len(self._orders) + 1}",
+            # Unique per broker instance: these ids reach a UNIQUE column when a test
+            # drives the live engine, and a fixed counter collides across runs.
+            broker_order_id=f"fake-{self._run_id}-{len(self._orders) + 1}",
             symbol=symbol, side=side, qty=qty, status=FILLED,
             filled_qty=qty, filled_avg_price=price,
         )
