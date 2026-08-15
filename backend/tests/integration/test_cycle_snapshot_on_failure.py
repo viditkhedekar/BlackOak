@@ -39,19 +39,19 @@ def stubbed_cycle(monkeypatch: pytest.MonkeyPatch):
         atr=1.0, entry_composite=61.0, entry_fundamentals_score=70.0, sector="Tech",
     )
 
-    async def _snapshot(_session):  # noqa: ANN001
+    async def _snapshot(_session):
         return {}, "risk_on", {}, 0, datetime.now(UTC).date()
 
-    async def _adopt(_session, _data):  # noqa: ANN001
+    async def _adopt(_session, _data):
         return AdoptionReport()
 
-    async def _reconcile(_session, _broker):  # noqa: ANN001
+    async def _reconcile(_session, _broker):
         return None
 
-    async def _positions(_session, _data):  # noqa: ANN001
+    async def _positions(_session, _data):
         return {}, {}
 
-    async def _unlocked(_session, _equity, _now):  # noqa: ANN001
+    async def _unlocked(_session, _equity, _now):
         # The fuse compares against whatever equity the database last saw, which for a
         # stub account is an arbitrary drawdown. Entries must stay open here.
         return False
@@ -102,7 +102,7 @@ async def test_rejected_order_still_leaves_an_equity_point(
     db_session: AsyncSession, stubbed_cycle: EntryIntent, clean_cycle_rows: datetime,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def _reject(*_args, **_kwargs):  # noqa: ANN002, ANN003
+    async def _reject(*_args, **_kwargs):
         raise RuntimeError("insufficient qty available for order")
 
     monkeypatch.setattr(decision_engine, "place_order", _reject)
