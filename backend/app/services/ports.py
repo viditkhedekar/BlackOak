@@ -9,7 +9,12 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Protocol, runtime_checkable
 
-from app.domain.broker import BrokerAccount, BrokerOrder, BrokerPosition
+from app.domain.broker import (
+    BrokerAccount,
+    BrokerOrder,
+    BrokerPosition,
+    PortfolioHistoryPoint,
+)
 from app.domain.fundamentals import EstimateRecord, FundamentalRecord
 from app.domain.macro import MacroPoint
 from app.domain.market_data import Bar, IntradayBar
@@ -92,4 +97,14 @@ class BrokerClient(Protocol):
 
     def get_order(self, client_order_id: str) -> BrokerOrder | None:
         """Look up an order by our client id, or None if the broker has no record."""
+        ...
+
+    def get_portfolio_history(
+        self, period: str = "1M", timeframe: str = "1H"
+    ) -> list[PortfolioHistoryPoint]:
+        """Equity marks the broker recorded for this account, oldest first.
+
+        Used to seed the equity curve over stretches where nothing of ours was running.
+        Empty list if the broker keeps no such history.
+        """
         ...
