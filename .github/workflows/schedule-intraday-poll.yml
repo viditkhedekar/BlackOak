@@ -1,0 +1,30 @@
+name: schedule / intraday-poll
+
+# Keeps intraday bars fresh — true window 09:00-16:00 ET, every 15 min. See
+# schedule-intraday-cycle.yml for why the cron below is wider than that (DST bracket) and
+# how the extra firing gets no-op'd. This is the most frequent of the five schedules
+# (~36 firings/trading day); still well inside GitHub's free 2,000 min/month.
+
+on:
+  schedule:
+    - cron: '0,15,30,45 13-21 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python -m app.cli schedule-job intraday_poll
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
