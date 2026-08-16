@@ -1,0 +1,29 @@
+name: schedule / order-sync
+
+# Advances open orders and records late fills — true window 10:00-16:00 ET. See
+# schedule-intraday-cycle.yml for why the cron below is wider than that (DST bracket) and
+# how the extra firing gets no-op'd.
+
+on:
+  schedule:
+    - cron: '35 14-21 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python -m app.cli schedule-job order_sync
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
