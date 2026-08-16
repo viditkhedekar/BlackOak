@@ -27,6 +27,13 @@ Money = Numeric(18, 6)
 # Balance-sheet/statement absolutes reach into the trillions (big-bank total assets),
 # which overflow Money's 12-digit integer part — give fundamentals room.
 BigMoney = Numeric(24, 4)
+# Alpaca's fractional-share quantities carry up to 9 decimal places. Money's 6dp rounds
+# them UP on store (28.156361547 -> 28.156362), and a later full-exit sell then requests
+# more than the broker actually holds — a real order rejection, not a rounding curiosity.
+# Anything that holds a live broker-reported quantity (a position's shares, an order's qty,
+# a fill's qty) needs this; BacktestTrade.shares is simulator output, not broker truth, and
+# stays on Money.
+Shares = Numeric(18, 9)
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -359,7 +366,7 @@ class Position(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         PG_UUID(as_uuid=True), ForeignKey("companies.id", ondelete="CASCADE")
     )
     symbol: Mapped[str] = mapped_column(String(16))
-    shares: Mapped[Decimal] = mapped_column(Money)
+    shares: Mapped[Decimal] = mapped_column(Shares)
     avg_entry_price: Mapped[Decimal] = mapped_column(Money)
     last_synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
@@ -397,7 +404,7 @@ class Order(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     broker_order_id: Mapped[str | None] = mapped_column(String(64))
     symbol: Mapped[str] = mapped_column(String(16))
     side: Mapped[str] = mapped_column(String(4))  # buy | sell
-    qty: Mapped[Decimal] = mapped_column(Money)
+    qty: Mapped[Decimal] = mapped_column(Shares)
     status: Mapped[str] = mapped_column(String(20))  # see order lifecycle
     reason: Mapped[str] = mapped_column(String(32))  # decision rule that spawned it
     reject_reason: Mapped[str | None] = mapped_column(String(200))
@@ -416,7 +423,7 @@ class Execution(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     broker_execution_id: Mapped[str | None] = mapped_column(String(64))
     symbol: Mapped[str] = mapped_column(String(16))
-    fill_qty: Mapped[Decimal] = mapped_column(Money)
+    fill_qty: Mapped[Decimal] = mapped_column(Shares)
     fill_price: Mapped[Decimal] = mapped_column(Money)
     filled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
