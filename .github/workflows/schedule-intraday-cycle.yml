@@ -1,0 +1,39 @@
+name: schedule / intraday-cycle
+
+# Free-tier deploy replacement for the persistent `app.worker` process (ADR-0003 assumes
+# a paid Railway service; this runs the same job on a schedule instead — see
+# backend/app/cli.py's `schedule-job` command and docs/adr/0003-apscheduler-worker.md).
+#
+# The decision cycle's true window is 10:00-15:00 ET, hourly. GitHub Actions cron is
+# UTC-only and can't shift for DST, so this fires every hour across the UNION of that
+# window in both EDT (14-19 UTC) and EST (15-20 UTC) — 14-20 UTC, once extra per day.
+# `schedule-job` re-checks the real ET hour before doing anything, so the extra firing is
+# a no-op, not an extra trade.
+#
+# Changing the cycle cadence (default hourly, matching CYCLE_INTERVAL_MINUTES=60 locally)
+# means editing the minute field below too — cron here is static YAML, it can't read the
+# app's own interval setting.
+
+on:
+  schedule:
+    - cron: '0 14-20 * * 1-5'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python -m app.cli schedule-job intraday_cycle
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
