@@ -12,7 +12,7 @@ from datetime import datetime
 import pytest
 
 from app.domain.calendar import is_trading_day
-from app.services.schedule import ET, minute_expr, next_cycle_at
+from app.services.schedule import ET, in_et_hour, in_trading_hour_range, minute_expr, next_cycle_at
 
 
 def _et(y: int, m: int, d: int, hh: int, mm: int = 0) -> datetime:
@@ -84,3 +84,45 @@ def test_result_is_always_a_session_inside_the_cycle_window(start: datetime) -> 
     assert fire > start
     assert is_trading_day(fire.date())
     assert 10 <= fire.astimezone(ET).hour <= 15
+
+
+# --- in_trading_hour_range / in_et_hour: the GH Actions DST-bracket guard -------------
+
+
+def test_in_trading_hour_range_accepts_the_true_window() -> None:
+    assert in_trading_hour_range(_et(2026, 8, 13, 10), 10, 15) is True
+    assert in_trading_hour_range(_et(2026, 8, 13, 15), 10, 15) is True
+
+
+def test_in_trading_hour_range_rejects_the_dst_bracket_overshoot() -> None:
+    """The UTC cron brackets an extra hour to cover both EST and EDT; the guard is what
+    turns that extra firing into a no-op instead of an extra trade."""
+    assert in_trading_hour_range(_et(2026, 8, 13, 9), 10, 15) is False
+    assert in_trading_hour_range(_et(2026, 8, 13, 16), 10, 15) is False
+
+
+def test_in_trading_hour_range_rejects_the_weekend() -> None:
+    assert in_trading_hour_range(_et(2026, 8, 15, 11), 10, 15) is False  # Saturday
+
+
+def test_in_trading_hour_range_rejects_a_market_holiday() -> None:
+    assert not is_trading_day(_et(2026, 12, 25, 11).date())
+    assert in_trading_hour_range(_et(2026, 12, 25, 11), 10, 15) is False
+
+
+def test_in_trading_hour_range_converts_from_utc() -> None:
+    # 14:00 UTC is 10:00 ET in August (EDT) — inside the window.
+    from datetime import UTC
+
+    assert in_trading_hour_range(datetime(2026, 8, 13, 14, 0, tzinfo=UTC), 10, 15) is True
+    # 14:00 UTC in January is 09:00 ET (EST) — outside a 10-15 window.
+    assert in_trading_hour_range(datetime(2026, 1, 13, 14, 0, tzinfo=UTC), 10, 15) is False
+
+
+def test_in_et_hour_has_no_weekday_gate() -> None:
+    """nightly runs every day, weekends included — nothing here should reject a Sunday."""
+    assert in_et_hour(_et(2026, 8, 16, 2), 2) is True  # Sunday
+
+
+def test_in_et_hour_rejects_the_wrong_hour() -> None:
+    assert in_et_hour(_et(2026, 8, 13, 3), 2) is False
