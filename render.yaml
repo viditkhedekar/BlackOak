@@ -1,0 +1,36 @@
+# Render Blueprint — free-tier API deploy. Import this repo at render.com/select-repo and
+# Render reads this file automatically. Frontend (Vercel) and the scheduled jobs (GitHub
+# Actions, .github/workflows/schedule-*.yml) are not part of this blueprint — see README's
+# "Deployment (free tier)" section for the full picture.
+#
+# Free-tier behavior worth knowing: this service spins down after 15 min idle and cold-starts
+# (~30s) on the next request. The scheduled-job workflows call the CLI directly against the
+# database, not through this API, so a sleeping API never blocks a trading cycle — only the
+# dashboard's first load after a quiet stretch pays the cold start.
+services:
+  - type: web
+    name: blackoak-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install uv && uv sync --frozen
+    startCommand: uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ENVIRONMENT
+        value: production
+      # Set for real once the Vercel frontend is deployed — CORS rejects everything until
+      # this lists the real frontend origin(s), comma-free JSON array as the app expects,
+      # e.g. ["https://your-app.vercel.app"].
+      - key: CORS_ORIGINS
+        value: '[]'
+      # Secrets: set these in the Render dashboard (Environment tab), not here — sync:
+      # false means Render prompts for a value instead of committing one to this file.
+      - key: DATABASE_URL
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
