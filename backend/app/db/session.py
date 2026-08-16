@@ -14,13 +14,30 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
-def _engine_args(database_url: str) -> tuple[str, dict[str, object]]:
-    """Strip libpq-only query params and translate ``sslmode`` to asyncpg's own ``ssl``
-    connect arg. Hosted Postgres (Neon, Supabase, Render) hands out URLs with
-    ``?sslmode=require`` (and Neon often adds ``channel_binding=require``), but asyncpg's
-    connector rejects unrecognized query params outright rather than ignoring them, so a
-    URL copied verbatim from those dashboards fails to connect at all."""
+_BARE_POSTGRES_DRIVERS = {"postgresql", "postgres"}
+
+
+def engine_args(database_url: str) -> tuple[str, dict[str, object]]:
+    """Turn a hosted-Postgres connection string (Neon, Supabase, Render, ...) into
+    something asyncpg will actually accept. Shared by the running app (``get_engine``
+    below) and Alembic (``alembic/env.py``) so a migration run can't take a different,
+    unfixed path than the app itself.
+
+    Two problems, both from the same source: those dashboards copy out a plain libpq URL,
+    not one written for asyncpg.
+
+    1. A bare ``postgresql://`` (no ``+asyncpg``) resolves to SQLAlchemy's default driver
+       for that dialect, which is the sync ``psycopg2`` — a package this project never
+       installs, since everything here is async. The engine construction then dies trying
+       to import a driver that was never a dependency, not with a helpful "wrong URL"
+       error. Force the ``+asyncpg`` driver explicitly rather than trust the input.
+    2. ``?sslmode=require`` (and Neon's ``&channel_binding=require``) are libpq-only query
+       params; asyncpg's connector rejects unrecognized ones outright instead of ignoring
+       them. Strip them and translate ``sslmode`` to asyncpg's own ``ssl`` connect arg.
+    """
     url = make_url(database_url)
+    if url.drivername in _BARE_POSTGRES_DRIVERS:
+        url = url.set(drivername="postgresql+asyncpg")
     query = dict(url.query)
     sslmode = query.pop("sslmode", None)
     query.pop("channel_binding", None)  # libpq-only; asyncpg has no equivalent kwarg
@@ -33,7 +50,7 @@ def _engine_args(database_url: str) -> tuple[str, dict[str, object]]:
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
-        url, connect_args = _engine_args(get_settings().database_url)
+        url, connect_args = engine_args(get_settings().database_url)
         _engine = create_async_engine(url, pool_pre_ping=True, connect_args=connect_args)
     return _engine
 
