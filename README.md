@@ -65,7 +65,7 @@ The architecture diagram above assumes Railway for the API + worker, matching [A
 
 Steps:
 
-1. **Database** — create a Neon project, copy its connection string. It arrives as `postgresql://...?sslmode=require`; the app's `DATABASE_URL` needs the `postgresql+asyncpg://` scheme instead of plain `postgresql://` (asyncpg handles the `sslmode`/`channel_binding` query params automatically — see `app/db/session.py`). Run `uv run alembic upgrade head` once against it locally (point `DATABASE_URL` at Neon temporarily) to create the schema, or let Render's start command do it on first deploy.
+1. **Database** — create a Neon project, copy its connection string as-is (`postgresql://...?sslmode=require`) into `DATABASE_URL`. The app normalizes it itself — forces the `asyncpg` driver and strips the libpq-only `sslmode`/`channel_binding` params asyncpg would otherwise choke on (`app/db/session.py::engine_args`, shared by the app and Alembic) — so no manual URL editing needed. Render's start command runs `alembic upgrade head` on first deploy and creates the schema.
 2. **API** — import this repo at [render.com/select-repo](https://dashboard.render.com/select-repo); it reads `render.yaml` automatically. Fill in `DATABASE_URL`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` in the Render dashboard's Environment tab (left blank in the blueprint on purpose).
 3. **Frontend** — import the repo at [vercel.com/new](https://vercel.com/new), set root directory to `frontend`, add env var `NEXT_PUBLIC_API_URL` = the Render service's URL.
 4. **Close the loop** — update `CORS_ORIGINS` on Render to the real Vercel URL (it starts as `[]`, which blocks everything).
