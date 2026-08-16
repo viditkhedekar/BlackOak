@@ -164,6 +164,52 @@ async def _reconcile() -> None:
     log.info("cli.reconcile.done", report=report)
 
 
+async def _schedule_job(job: str) -> None:
+    """Entrypoint for the free-tier deploy's GitHub Actions cron (replaces the persistent
+    ``app.worker`` process — see ``.github/workflows/schedule-*.yml`` and ADR-0003's
+    "Consequences" note that a paid always-on host is the alternative).
+
+    GitHub Actions ``schedule:`` is UTC-only and cannot shift for DST, so each workflow's
+    cron brackets a UTC window wide enough to cover both EST and EDT for the job's true ET
+    window — meaning it fires up to an hour more often than the job actually wants. This
+    re-checks the real ET window with ``app.services.schedule`` before running anything, the
+    same trading-calendar-aware logic the in-process worker's APScheduler triggers encode.
+    """
+    from collections.abc import Awaitable, Callable
+    from datetime import datetime
+
+    from app.jobs.eod_ingest import run_eod_ingest
+    from app.jobs.intraday_cycle import run_intraday_cycle
+    from app.jobs.intraday_poll import run_intraday_poll
+    from app.jobs.nightly import run_nightly
+    from app.jobs.order_sync import run_order_sync
+    from app.services.schedule import in_et_hour, in_trading_hour_range
+
+    # (window check, job coroutine) — mirrors app/jobs/scheduler.py's build_scheduler()
+    # one for one, so the free-tier deploy runs on the same calendar as the persistent-
+    # worker one.
+    jobs: dict[str, tuple[Callable[[datetime], bool], Callable[[], Awaitable[None]]]] = {
+        "intraday_cycle": (lambda now: in_trading_hour_range(now, 10, 15), run_intraday_cycle),
+        "order_sync": (lambda now: in_trading_hour_range(now, 10, 16), run_order_sync),
+        "intraday_poll": (lambda now: in_trading_hour_range(now, 9, 16), run_intraday_poll),
+        "eod_ingest_preopen": (
+            lambda now: in_trading_hour_range(now, 8, 8),
+            lambda: run_eod_ingest(job_name="eod_ingest_preopen"),
+        ),
+        "eod_ingest_postclose": (
+            lambda now: in_trading_hour_range(now, 16, 16),
+            lambda: run_eod_ingest(job_name="eod_ingest_postclose"),
+        ),
+        "nightly": (lambda now: in_et_hour(now, 2), run_nightly),
+    }
+    in_window, run = jobs[job]
+    now = datetime.now(UTC)
+    if not in_window(now):
+        log.info("cli.schedule_job.skip_outside_window", job=job)
+        return
+    await run()
+
+
 async def _sync_orders() -> None:
     """Advance open orders from broker truth and record any fills that landed late."""
     from app.services.order_sync import sync_open_orders
@@ -315,6 +361,19 @@ def main() -> None:
 
     sub.add_parser("sync-orders", help="Advance open orders and record late fills")
 
+    sched = sub.add_parser(
+        "schedule-job",
+        help="GitHub Actions cron entrypoint (free-tier deploy) — runs one scheduled "
+        "job if its real ET window is now, else no-ops",
+    )
+    sched.add_argument(
+        "job",
+        choices=[
+            "intraday_cycle", "order_sync", "intraday_poll",
+            "eod_ingest_preopen", "eod_ingest_postclose", "nightly",
+        ],
+    )
+
     sub.add_parser("refresh", help="Run the daily price refresh + rescore now")
 
     bfe = sub.add_parser("backfill-equity", help="Seed the equity curve from broker history")
@@ -355,6 +414,8 @@ def main() -> None:
         asyncio.run(_reconcile())
     elif args.command == "sync-orders":
         asyncio.run(_sync_orders())
+    elif args.command == "schedule-job":
+        asyncio.run(_schedule_job(args.job))
     elif args.command == "refresh":
         asyncio.run(_refresh())
     elif args.command == "backfill-equity":
