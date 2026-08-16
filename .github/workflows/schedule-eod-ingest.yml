@@ -1,0 +1,38 @@
+name: schedule / eod-ingest
+
+# Two passes: pre-open (08:30 ET, picks up the vendor's overnight restatements) and
+# post-close (16:30 ET, ingests today). Both `schedule-job` calls run on every firing of
+# either cron entry below — each is internally gated to its own exact ET hour, so whichever
+# one doesn't match the current time just no-ops. See schedule-intraday-cycle.yml for why
+# the cron brackets a UTC window wider than the true target (DST).
+
+on:
+  schedule:
+    - cron: '30 12-13 * * 1-5'  # brackets 08:30 ET (12:30 UTC EDT / 13:30 UTC EST)
+    - cron: '30 20-21 * * 1-5'  # brackets 16:30 ET (20:30 UTC EDT / 21:30 UTC EST)
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run python -m app.cli schedule-job eod_ingest_preopen
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      - run: uv run python -m app.cli schedule-job eod_ingest_postclose
+        env:
+          ENVIRONMENT: production
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
