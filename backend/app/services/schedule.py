@@ -47,6 +47,28 @@ def cycle_trigger(interval_minutes: int) -> CronTrigger:
     )
 
 
+def in_trading_hour_range(now: datetime, start_hour: int, end_hour: int) -> bool:
+    """Weekday + trading-calendar + ET-hour gate (inclusive both ends).
+
+    Exists for the free-tier deploy: GitHub Actions cron only understands UTC and can't
+    shift for DST, so each ``.github/workflows/schedule-*.yml`` brackets a UTC window wide
+    enough to cover both EST and EDT for a job's true ET window, firing it up to an hour
+    more often than intended. This narrows that bracket back to the real window so the
+    extra firing is a no-op rather than an extra trade or ingest.
+    """
+    et_now = now.astimezone(ET)
+    return (
+        et_now.weekday() < 5
+        and is_trading_day(et_now.date())
+        and start_hour <= et_now.hour <= end_hour
+    )
+
+
+def in_et_hour(now: datetime, hour: int) -> bool:
+    """Same DST-bracket narrowing for a once-daily job with no weekday gate (nightly)."""
+    return now.astimezone(ET).hour == hour
+
+
 def next_cycle_at(interval_minutes: int, now: datetime | None = None) -> datetime | None:
     """When the next decision cycle actually runs, skipping market holidays.
 
