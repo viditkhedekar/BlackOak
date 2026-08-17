@@ -34,14 +34,25 @@ SessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 # Jobs only the worker runs — a recent row for any of them means a worker is alive. CLI
 # jobs (backfill, manual scoring) are excluded so a hand-run command can't fake a heartbeat.
 WORKER_JOBS = ("decision_cycle", "intraday_poll", "eod_ingest_preopen", "eod_ingest_postclose")
-# The intraday poll fires every 15 min; one missed beat plus slack means the worker is gone.
-HEARTBEAT_STALE_MINUTES = 20
+# The intraday poll's target cadence is 15 min, whether it's the persistent app.worker
+# process or (free-tier deploy) GitHub Actions cron calling schedule-job. GitHub's own cron
+# is documented to run 5-15+ min late under platform load, so two slow-but-healthy beats in
+# a row can leave a 30+ min gap with nothing actually wrong — a 20 min threshold flagged
+# that as "worker down" on a deploy that was working exactly as designed. 40 min tolerates
+# that slop while still catching a genuine outage well inside a trading session.
+HEARTBEAT_STALE_MINUTES = 40
 POLL_START_HOUR = 9
 POLL_END_HOUR = 16
 
 
 def _num(v: object) -> float | None:
     return float(v) if v is not None else None  # type: ignore[arg-type]
+
+
+def _is_worker_running(now: datetime, last_seen: datetime | None) -> bool:
+    return last_seen is not None and (now - last_seen) <= timedelta(
+        minutes=HEARTBEAT_STALE_MINUTES
+    )
 
 
 @router.get("/portfolio", response_model=PortfolioResponse)
@@ -87,10 +98,7 @@ async def schedule(session: SessionDep) -> ScheduleResponse:
         is_trading_day(et_now.date())
         and POLL_START_HOUR <= et_now.hour < POLL_END_HOUR
     )
-    running = (
-        last_seen is not None
-        and (now - last_seen) <= timedelta(minutes=HEARTBEAT_STALE_MINUTES)
-    )
+    running = _is_worker_running(now, last_seen)
 
     return ScheduleResponse(
         next_cycle_at=next_cycle_at(settings.cycle_interval_minutes, now),
